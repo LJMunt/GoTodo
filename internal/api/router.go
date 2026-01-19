@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"GoToDo/internal/api/admin"
 	"GoToDo/internal/api/auth"
 	"GoToDo/internal/api/users"
 	"GoToDo/internal/app"
@@ -31,12 +32,20 @@ func NewRouter(deps app.Deps) chi.Router {
 			auth.Routes(r, deps)
 		})
 
+		// Everything in here requires a valid user token
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
+
 			r.Route("/users", func(r chi.Router) {
 				users.Routes(r, deps)
 			})
+
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(authmw.RequireAdmin) // only extra requirement
+				admin.Routes(r, deps)
+			})
 		})
 	})
+
 	return r
 }

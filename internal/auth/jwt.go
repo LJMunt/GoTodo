@@ -19,10 +19,18 @@ func SignToken(userID int64) (string, error) {
 		return "", fmt.Errorf("JWT_SECRET is not set")
 	}
 
+	ttlStr := os.Getenv("JWT_ACCESS_TTL")
+	ttl := 12 * time.Hour
+	if ttlStr != "" {
+		if parsed, err := time.ParseDuration(ttlStr); err == nil {
+			ttl = parsed
+		}
+	}
+
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(12 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}

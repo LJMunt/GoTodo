@@ -26,9 +26,6 @@ func FromContext(ctx context.Context) (User, bool) {
 
 func bearerToken(r *http.Request) (string, bool) {
 	authz := r.Header.Get("Authorization")
-	if authz == "" {
-		return "", false
-	}
 	const prefix = "Bearer "
 	if !strings.HasPrefix(authz, prefix) {
 		return "", false
@@ -57,13 +54,11 @@ func RequireAuth(db *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			var isAdmin bool
 			var isActive bool
-
 			err = db.QueryRow(ctx,
 				`SELECT is_admin, is_active FROM users WHERE id=$1`,
 				claims.UserID,
 			).Scan(&isAdmin, &isActive)
 
-			// Don’t leak whether the account exists vs disabled.
 			if err != nil || !isActive {
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
@@ -73,4 +68,15 @@ func RequireAuth(db *pgxpool.Pool) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 		})
 	}
+}
+
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok := FromContext(r.Context())
+		if !ok || !u.IsAdmin {
+			http.Error(w, "forbidden: admin access required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
