@@ -1,0 +1,25 @@
+# Go build artifacts
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace (rare, but if you ever use it)
+go.work
+go.work.sum
+
+# Environment / secrets
+.env
+
+# JetBrains
+.idea/
+qodana.yaml
+
+# OS
+.DS_Store
+Thumbs.db
