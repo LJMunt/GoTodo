@@ -12,5 +12,12 @@ func Routes(r chi.Router, deps app.Deps) {
 		r.Get("/{id}", GetUserHandler(deps.DB))
 		r.Patch("/{id}", UpdateUserHandler(deps.DB))
 		r.Delete("/{id}", DeleteUserHandler(deps.DB))
+
+		r.Route("/{userId}/projects", func(r chi.Router) {
+			r.Get("/", AdminListUserProjectsHandler(deps.DB))
+			r.Get("/{projectId}", AdminGetProjectHandler(deps.DB))
+			r.Patch("/{projectId}", AdminUpdateProjectHandler(deps.DB))
+			r.Delete("/{projectId}", AdminDeleteProjectHandler(deps.DB))
+		})
 	})
 }

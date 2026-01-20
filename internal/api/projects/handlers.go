@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,7 +18,7 @@ import (
 type ProjectResponse struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	Description *string   `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -62,6 +63,11 @@ func CreateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if err != nil {
+			// Specific error for unique constraint violation
+			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "23505") {
+				http.Error(w, "project with this name already exists", http.StatusConflict)
+				return
+			}
 			http.Error(w, "failed to create project", http.StatusInternalServerError)
 			return
 		}
