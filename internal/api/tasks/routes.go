@@ -18,5 +18,8 @@ func Routes(r chi.Router, deps app.Deps) {
 		r.Get("/{id}", GetTaskHandler(deps.DB))
 		r.Patch("/{id}", UpdateTaskHandler(deps.DB))
 		r.Delete("/{id}", DeleteTaskHandler(deps.DB))
+
+		r.Get("/{taskId}/tags", GetTaskTagsHandler(deps.DB))
+		r.Put("/{taskId}/tags", PutTaskTagsHandler(deps.DB))
 	})
 }
