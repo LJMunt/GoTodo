@@ -32,6 +32,21 @@ type UserResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type TaskResponse struct {
+	ID          int64      `json:"id"`
+	UserID      int64      `json:"user_id"`
+	ProjectID   int64      `json:"project_id"`
+	Title       string     `json:"title"`
+	Description *string    `json:"description,omitempty"`
+	DueAt       *time.Time `json:"due_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	RepeatEvery *int       `json:"repeat_every,omitempty"`
+	RepeatUnit  *string    `json:"repeat_unit,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
 func parseInt64Param(r *http.Request, key string) (int64, error) {
 	s := chi.URLParam(r, key)
 	return strconv.ParseInt(s, 10, 64)
@@ -392,6 +407,173 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		if tag.RowsAffected() == 0 {
 			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		// Optional: include_deleted=true
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `
+			SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
+			       repeat_every, repeat_unit, created_at, updated_at
+			FROM tasks
+			WHERE user_id = $1
+		`
+		if !includeDeleted {
+			query += " AND deleted_at IS NULL"
+		}
+		query += " ORDER BY id"
+
+		rows, err := db.Query(ctx, query, userID)
+		if err != nil {
+			http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TaskResponse, 0, 64)
+		for rows.Next() {
+			var t TaskResponse
+			if err := rows.Scan(
+				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
+				&t.RepeatEvery, &t.RepeatUnit,
+				&t.CreatedAt, &t.UpdatedAt,
+			); err != nil {
+				http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			http.Error(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		// Optional: include_deleted=true
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// Ensure the project belongs to that user (helps avoid “projectId exists but not for user” leaks)
+		var ok bool
+		if err := db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND user_id=$2)`,
+			projectID, userID,
+		).Scan(&ok); err != nil {
+			http.Error(w, "failed to verify project", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		query := `
+			SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
+			       repeat_every, repeat_unit, created_at, updated_at
+			FROM tasks
+			WHERE user_id = $1 AND project_id = $2
+		`
+		if !includeDeleted {
+			query += " AND deleted_at IS NULL"
+		}
+		query += " ORDER BY id"
+
+		rows, err := db.Query(ctx, query, userID, projectID)
+		if err != nil {
+			http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TaskResponse, 0, 64)
+		for rows.Next() {
+			var t TaskResponse
+			if err := rows.Scan(
+				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
+				&t.RepeatEvery, &t.RepeatUnit,
+				&t.CreatedAt, &t.UpdatedAt,
+			); err != nil {
+				http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		taskID, err := parseInt64Param(r, "taskId")
+		if err != nil || taskID <= 0 {
+			http.Error(w, "invalid task id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// soft delete
+		tag, err := db.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			taskID, userID,
+		)
+		if err != nil {
+			http.Error(w, "failed to delete task", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			http.Error(w, "task not found", http.StatusNotFound)
 			return
 		}
 
