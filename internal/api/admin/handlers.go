@@ -232,7 +232,7 @@ func DeleteUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func AdminListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -275,7 +275,7 @@ func AdminListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func AdminGetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -313,7 +313,7 @@ func AdminGetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func AdminUpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type request struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -366,7 +366,7 @@ func AdminUpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func AdminDeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
