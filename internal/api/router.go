@@ -2,6 +2,7 @@ package api
 
 import (
 	"GoToDo/internal/api/projects"
+	"GoToDo/internal/api/tasks"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -48,6 +49,7 @@ func NewRouter(deps app.Deps) chi.Router {
 			r.Route("/projects", func(r chi.Router) {
 				projects.Routes(r, deps)
 			})
+			tasks.Routes(r, deps)
 		})
 	})
 
