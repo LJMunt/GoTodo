@@ -225,13 +225,14 @@ class GoToDoAPI:
         raise TestFailure(f"/ready did not become 200 within {timeout_sec}s (last status: {last_status})")
 
 
+def log(msg: str) -> None:
+    print(msg)
+
+
 class SmokeTestRunner:
     def __init__(self, api: GoToDoAPI, verbose: bool = False) -> None:
         self.api = api
         self.verbose = verbose
-
-    def log(self, msg: str) -> None:
-        print(msg)
 
     def vlog(self, msg: str) -> None:
         if self.verbose:
@@ -245,18 +246,18 @@ class SmokeTestRunner:
         user_password: str,
         user_new_password: str,
     ) -> None:
-        self.log("== GoToDo API smoke test ==")
-        self.log("Waiting for API readiness...")
+        log("== GoToDo API smoke test ==")
+        log("Waiting for API readiness...")
         self.api.wait_ready(timeout_sec=10.0)
 
 
     # 1) Health/ready
-        self.log("[1/22] health + ready")
+        log("[1/22] health + ready")
         expect_status(self.api.health(), 200, "GET /health")
         expect_status(self.api.ready(), 200, "GET /ready")
 
         # 2) Login admin (admin must already exist and be admin in DB)
-        self.log("[2/22] admin login")
+        log("[2/22] admin login")
         admin_login = self.api.login(admin_email, admin_password)
         expect_status(admin_login, 200, "POST /auth/login (admin)")
         admin_token = admin_login.json().get("token")
@@ -266,13 +267,13 @@ class SmokeTestRunner:
         # 3) Create unique user
         uniq = f"{_now_ms()}-{uuid.uuid4().hex[:10]}"
         user_email = f"{user_email_prefix}+{uniq}@example.com" if "@" not in user_email_prefix else user_email_prefix.replace("@", f"+{uniq}@")
-        self.log(f"[3/22] signup user: {user_email}")
+        log(f"[3/22] signup user: {user_email}")
         signup = self.api.signup(user_email, user_password)
         # Depending on your signup handler, you may return 201 with user json (and possibly a token).
         expect_status(signup, 201, "POST /auth/signup (user)")
 
         # 4) Login as the new user
-        self.log("[4/22] user login")
+        log("[4/22] user login")
         user_login = self.api.login(user_email, user_password)
         expect_status(user_login, 200, "POST /auth/login (user)")
         user_token = user_login.json().get("token")
@@ -280,7 +281,7 @@ class SmokeTestRunner:
             raise TestFailure("User login did not return a token")
 
         # 5) /me should work and return id
-        self.log("[5/22] GET /users/me")
+        log("[5/22] GET /users/me")
         me = self.api.me(user_token)
         expect_status(me, 200, "GET /users/me")
         me_json = me.json()
@@ -290,23 +291,23 @@ class SmokeTestRunner:
             raise TestFailure(f"/me did not return integer id. Got: {user_id}")
 
         # 6) Admin disables user (soft delete)
-        self.log("[6/22] admin disables user (soft delete)")
+        log("[6/22] admin disables user (soft delete)")
         disable = self.api.admin_disable_user(admin_token, user_id)
         expect_status(disable, 204, "DELETE /admin/users/{id}")
 
         # 7) Disabled user should fail login (your login returns 401 for invalid/disabled)
-        self.log("[7/22] disabled user cannot login")
+        log("[7/22] disabled user cannot login")
         disabled_login = self.api.login(user_email, user_password)
         expect_status(disabled_login, 401, "POST /auth/login (disabled user)")
 
         # 8) Admin re-enables user
-        self.log("[8/22] admin re-enables user")
+        log("[8/22] admin re-enables user")
         enable = self.api.admin_update_user(admin_token, user_id, {"is_active": True})
         expect_status_in(enable, (200, 204), "PATCH /admin/users/{id} (enable)")
         self.vlog(f"enable response: {enable.json()}")
 
         # 9) User can login again, then admin changes password, then user can login with new password
-        self.log("[9/22] password change cycle")
+        log("[9/22] password change cycle")
         user_login2 = self.api.login(user_email, user_password)
         expect_status(user_login2, 200, "POST /auth/login (re-enabled user)")
         user_token2 = user_login2.json().get("token")
@@ -329,12 +330,12 @@ class SmokeTestRunner:
             raise TestFailure("New password login did not return a token")
 
         # 10) Non-admin user must not access admin endpoint
-        self.log("[10/22] user forbidden from admin endpoints")
+        log("[10/22] user forbidden from admin endpoints")
         admin_list_as_user = self.api.admin_list_users(user_token3)
         expect_status(admin_list_as_user, 403, "GET /admin/users (as non-admin)")
 
         # 11) smoke-test user makes new project
-        self.log("[11/22] user creates project")
+        log("[11/22] user creates project")
         create_proj = self.api.create_project(user_token3, "My Project v1", "My Description")
         expect_status(create_proj, 201, "POST /projects")
         proj_data = create_proj.json()
@@ -349,13 +350,13 @@ class SmokeTestRunner:
         )
 
         # 12) smoke-test user gets project
-        self.log("[12/22] user gets project")
+        log("[12/22] user gets project")
         get_proj = self.api.get_project(user_token3, project1.id)
         expect_status(get_proj, 200, "GET /projects/{id}")
         self.vlog(f"get project response: {get_proj.json()}")
 
         # 13) smoke-test user lists all project
-        self.log("[13/22] user lists projects")
+        log("[13/22] user lists projects")
         list_projs = self.api.list_projects(user_token3)
         expect_status(list_projs, 200, "GET /projects")
         projs = list_projs.json()
@@ -363,22 +364,22 @@ class SmokeTestRunner:
             raise TestFailure(f"Project {project1.id} not found in project list")
 
         # 14) smoke-test user updates project
-        self.log("[14/22] user updates project")
+        log("[14/22] user updates project")
         update_proj = self.api.update_project(user_token3, project1.id, {"name": "Updated Project"})
         expect_status_in(update_proj, (200, 204), "PATCH /projects/{id}")
 
         # 15) smoke-test user deletes project
-        self.log("[15/22] user deletes project")
+        log("[15/22] user deletes project")
         delete_proj = self.api.delete_project(user_token3, project1.id)
         expect_status_in(delete_proj, (200, 204), "DELETE /projects/{id}")
 
         # 16) smoke-test user gets project -> must fail
-        self.log("[16/22] user gets deleted project (must fail)")
+        log("[16/22] user gets deleted project (must fail)")
         get_deleted_proj = self.api.get_project(user_token3, project1.id)
         expect_status(get_deleted_proj, 404, "GET /projects/{id} (deleted)")
 
         # 17) smoke-test user makes new project
-        self.log("[17/22] user creates another project")
+        log("[17/22] user creates another project")
         create_proj2 = self.api.create_project(user_token3, "Admin Test Project")
         expect_status(create_proj2, 201, "POST /projects")
         proj_data2 = create_proj2.json()
@@ -391,7 +392,7 @@ class SmokeTestRunner:
         )
 
         # 18) admin lists projects
-        self.log("[18/22] admin lists user's projects")
+        log("[18/22] admin lists user's projects")
         admin_list_projs = self.api.admin_list_user_projects(admin_token, user_id)
         expect_status(admin_list_projs, 200, "GET /admin/users/{userId}/projects")
         admin_projs = admin_list_projs.json()
@@ -399,26 +400,26 @@ class SmokeTestRunner:
             raise TestFailure(f"Project {project2.id} not found in admin list of user projects")
 
         # 19) admin gets the project
-        self.log("[19/22] admin gets user's project")
+        log("[19/22] admin gets user's project")
         admin_get_proj = self.api.admin_get_user_project(admin_token, user_id, project2.id)
         expect_status(admin_get_proj, 200, "GET /admin/users/{userId}/projects/{projectId}")
 
         # 20) admin updates project
-        self.log("[20/22] admin updates user's project")
+        log("[20/22] admin updates user's project")
         admin_update_proj = self.api.admin_update_user_project(admin_token, user_id, project2.id, {"description": "Admin updated this"})
         expect_status_in(admin_update_proj, (200, 204), "PATCH /admin/users/{userId}/projects/{projectId}")
 
         # 21) admin deletes project
-        self.log("[21/22] admin deletes user's project")
+        log("[21/22] admin deletes user's project")
         admin_delete_proj = self.api.admin_delete_user_project(admin_token, user_id, project2.id)
         expect_status_in(admin_delete_proj, (200, 204), "DELETE /admin/users/{userId}/projects/{projectId}")
 
         # 22) admin gets project -> must fail
-        self.log("[22/22] admin gets deleted project (must fail)")
+        log("[22/22] admin gets deleted project (must fail)")
         admin_get_deleted_proj = self.api.admin_get_user_project(admin_token, user_id, project2.id)
         expect_status(admin_get_deleted_proj, 404, "GET /admin/users/{userId}/projects/{projectId} (deleted)")
 
-        self.log("✅ All smoke tests passed.")
+        log("✅ All smoke tests passed.")
 
 
 def main() -> int:
