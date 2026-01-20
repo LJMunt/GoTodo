@@ -25,6 +25,7 @@ func NewRouter(deps app.Deps) chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
+	r.Use(middleware.CleanPath)
 
 	// Routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -50,9 +51,11 @@ func NewRouter(deps app.Deps) chi.Router {
 			r.Route("/projects", func(r chi.Router) {
 				projects.Routes(r, deps)
 			})
-			tasks.Routes(r, deps)
 			r.Route("/tags", func(r chi.Router) {
 				tags.Routes(r, deps)
+			})
+			r.Group(func(r chi.Router) {
+				tasks.Routes(r, deps)
 			})
 		})
 	})

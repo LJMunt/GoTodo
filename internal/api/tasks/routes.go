@@ -7,12 +7,6 @@ import (
 )
 
 func Routes(r chi.Router, deps app.Deps) {
-	// Project-scoped
-	r.Route("/projects/{projectId}/tasks", func(r chi.Router) {
-		r.Post("/", CreateTaskHandler(deps.DB))
-		r.Get("/", ListProjectTasksHandler(deps.DB))
-	})
-
 	// Global task endpoints
 	r.Route("/tasks", func(r chi.Router) {
 		r.Get("/{id}", GetTaskHandler(deps.DB))
