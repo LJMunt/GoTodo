@@ -44,9 +44,8 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		Title       string     `json:"title"`
 		Description *string    `json:"description"`
 		DueAt       *time.Time `json:"due_at"`
-
-		RepeatEvery *int    `json:"repeat_every"`
-		RepeatUnit  *string `json:"repeat_unit"`
+		RepeatEvery *int       `json:"repeat_every"`
+		RepeatUnit  *string    `json:"repeat_unit"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +71,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Recurrence validation: both nil or both set
+		// recurrence validation
 		if (req.RepeatEvery == nil) != (req.RepeatUnit == nil) {
 			http.Error(w, "repeat_every and repeat_unit must be set together", http.StatusBadRequest)
 			return
@@ -85,6 +84,23 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		// ✅ Ensure project exists, belongs to user, and is not deleted
+		var projectOK bool
+		if err := db.QueryRow(ctx,
+			`SELECT EXISTS(
+			   SELECT 1 FROM projects
+			   WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			 )`,
+			projectID, user.ID,
+		).Scan(&projectOK); err != nil {
+			http.Error(w, "failed to verify project", http.StatusInternalServerError)
+			return
+		}
+		if !projectOK {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
 		var t TaskResponse
 		err = db.QueryRow(ctx,
 			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit)
@@ -96,9 +112,6 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description, &t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit, &t.CreatedAt, &t.UpdatedAt,
 		)
-
-		// If project doesn't belong to user, the composite FK will reject insert.
-		// You may want to map that to 404/403 later; for MVP, 500 is acceptable but we can improve.
 		if err != nil {
 			http.Error(w, "failed to create task", http.StatusInternalServerError)
 			return
@@ -126,6 +139,23 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
+
+		// ✅ Project must exist and not be deleted
+		var projectOK bool
+		if err := db.QueryRow(ctx,
+			`SELECT EXISTS(
+			   SELECT 1 FROM projects
+			   WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			 )`,
+			projectID, user.ID,
+		).Scan(&projectOK); err != nil {
+			http.Error(w, "failed to verify project", http.StatusInternalServerError)
+			return
+		}
+		if !projectOK {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
 
 		rows, err := db.Query(ctx,
 			`SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
@@ -182,10 +212,11 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var t TaskResponse
 		err = db.QueryRow(ctx,
-			`SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
-			        repeat_every, repeat_unit, created_at, updated_at
-			 FROM tasks
-			 WHERE id=$1 AND user_id=$2`,
+			`SELECT t.id, t.user_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			        t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
+			 FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,
 		).Scan(
 			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description, &t.DueAt, &t.CompletedAt, &t.DeletedAt,
@@ -198,10 +229,6 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		if err != nil {
 			http.Error(w, "failed to fetch task", http.StatusInternalServerError)
-			return
-		}
-		if t.DeletedAt != nil {
-			http.Error(w, "task not found", http.StatusNotFound)
 			return
 		}
 

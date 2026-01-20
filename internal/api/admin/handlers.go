@@ -255,16 +255,20 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		rows, err := db.Query(ctx,
-			`SELECT id, name, description, created_at, updated_at
+		query := `SELECT id, name, description, created_at, updated_at
 			 FROM projects
-			 WHERE user_id=$1
-			 ORDER BY id`,
-			userID,
-		)
+			 WHERE user_id=$1`
+		if !includeDeleted {
+			query += " AND deleted_at IS NULL"
+		}
+		query += " ORDER BY id"
+
+		rows, err := db.Query(ctx, query, userID)
 		if err != nil {
 			http.Error(w, "failed to list projects", http.StatusInternalServerError)
 			return
@@ -303,16 +307,20 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
 		var p ProjectResponse
-		err = db.QueryRow(ctx,
-			`SELECT id, name, description, created_at, updated_at
+		query := `SELECT id, name, description, created_at, updated_at
 			 FROM projects
-			 WHERE id = $1 AND user_id = $2`,
-			projectID, userID,
-		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
+			 WHERE id = $1 AND user_id = $2`
+		if !includeDeleted {
+			query += " AND deleted_at IS NULL"
+		}
+
+		err = db.QueryRow(ctx, query, projectID, userID).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "project not found", http.StatusNotFound)
@@ -365,7 +373,7 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 SET name = COALESCE($1, name),
 			     description = COALESCE($2, description),
 			     updated_at = now()
-			 WHERE id = $3 AND user_id = $4`,
+			 WHERE id = $3 AND user_id = $4 AND deleted_at IS NULL`,
 			req.Name, req.Description, projectID, userID,
 		)
 		if err != nil {
@@ -397,8 +405,17 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tag, err := db.Exec(ctx,
-			`DELETE FROM projects WHERE id = $1 AND user_id = $2`,
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		tag, err := tx.Exec(ctx,
+			`UPDATE projects
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
 			projectID, userID,
 		)
 		if err != nil {
@@ -407,6 +424,158 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		if tag.RowsAffected() == 0 {
 			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		_, err = tx.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			projectID, userID,
+		)
+		if err != nil {
+			http.Error(w, "failed to delete project tasks", http.StatusInternalServerError)
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			http.Error(w, "failed to commit project delete", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+	type request struct {
+		RestoreTasks *bool `json:"restore_tasks"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			http.Error(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		// Default: restore tasks too (fits your deletion semantics)
+		restoreTasks := true
+		var req request
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			if req.RestoreTasks != nil {
+				restoreTasks = *req.RestoreTasks
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		tag, err := tx.Exec(ctx,
+			`UPDATE projects
+			 SET deleted_at = NULL, updated_at = now()
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+			projectID, userID,
+		)
+		if err != nil {
+			http.Error(w, "failed to restore project", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			http.Error(w, "project not found or not deleted", http.StatusNotFound)
+			return
+		}
+
+		if restoreTasks {
+			_, err := tx.Exec(ctx,
+				`UPDATE tasks
+				 SET deleted_at = NULL, updated_at = now()
+				 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+				projectID, userID,
+			)
+			if err != nil {
+				http.Error(w, "failed to restore project tasks", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			http.Error(w, "failed to commit restore", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		taskID, err := parseInt64Param(r, "taskId")
+		if err != nil || taskID <= 0 {
+			http.Error(w, "invalid task id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// Check the task exists (even if deleted) and whether its project is deleted
+		var projectDeleted bool
+		err = db.QueryRow(ctx,
+			`SELECT (p.deleted_at IS NOT NULL) AS project_deleted
+			 FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.id = $1 AND t.user_id = $2`,
+			taskID, userID,
+		).Scan(&projectDeleted)
+
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "task not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, "failed to verify task", http.StatusInternalServerError)
+			return
+		}
+
+		if projectDeleted {
+			http.Error(w, "cannot restore task while its project is deleted (restore project first)", http.StatusConflict)
+			return
+		}
+
+		tag, err := db.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = NULL, updated_at = now()
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+			taskID, userID,
+		)
+		if err != nil {
+			http.Error(w, "failed to restore task", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			http.Error(w, "task not found or not deleted", http.StatusNotFound)
 			return
 		}
 
@@ -422,22 +591,28 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Optional: include_deleted=true
 		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+		includeDeletedProjects := includeDeleted
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		// Join projects so we can optionally filter on project deleted_at too.
 		query := `
-			SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
-			       repeat_every, repeat_unit, created_at, updated_at
-			FROM tasks
-			WHERE user_id = $1
+			SELECT t.id, t.user_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
+			FROM tasks t
+			JOIN projects p ON p.id = t.project_id
+			WHERE t.user_id = $1
 		`
+
 		if !includeDeleted {
-			query += " AND deleted_at IS NULL"
+			query += " AND t.deleted_at IS NULL"
 		}
-		query += " ORDER BY id"
+		if !includeDeletedProjects {
+			query += " AND p.deleted_at IS NULL"
+		}
+		query += " ORDER BY t.id"
 
 		rows, err := db.Query(ctx, query, userID)
 		if err != nil {
@@ -483,36 +658,41 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Optional: include_deleted=true
 		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// Ensure the project belongs to that user (helps avoid “projectId exists but not for user” leaks)
-		var ok bool
+		// ✅ Verify project exists, belongs to user, and is not deleted (unless include_deleted=true)
+		var projectOK bool
 		if err := db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND user_id=$2)`,
-			projectID, userID,
-		).Scan(&ok); err != nil {
+			`SELECT EXISTS(
+			   SELECT 1 FROM projects
+			   WHERE id=$1 AND user_id=$2 AND ($3::boolean = true OR deleted_at IS NULL)
+			 )`,
+			projectID, userID, includeDeleted,
+		).Scan(&projectOK); err != nil {
 			http.Error(w, "failed to verify project", http.StatusInternalServerError)
 			return
 		}
-		if !ok {
+		if !projectOK {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
 
 		query := `
-			SELECT id, user_id, project_id, title, description, due_at, completed_at, deleted_at,
-			       repeat_every, repeat_unit, created_at, updated_at
-			FROM tasks
-			WHERE user_id = $1 AND project_id = $2
+			SELECT t.id, t.user_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
+			FROM tasks t
+			JOIN projects p ON p.id = t.project_id
+			WHERE t.user_id = $1 AND t.project_id = $2
 		`
 		if !includeDeleted {
-			query += " AND deleted_at IS NULL"
+			query += " AND t.deleted_at IS NULL"
 		}
-		query += " ORDER BY id"
+		// If project is deleted and includeDeleted=true, we allow listing.
+		// If includeDeleted=false, projectOK already ensured it's not deleted.
+		query += " ORDER BY t.id"
 
 		rows, err := db.Query(ctx, query, userID, projectID)
 		if err != nil {
@@ -561,7 +741,6 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// soft delete
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks
 			 SET deleted_at = now(), updated_at = now()

@@ -87,7 +87,7 @@ func ListProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE user_id=$1 ORDER BY id`, user.ID)
+		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id`, user.ID)
 		if err != nil {
 			http.Error(w, "failed to list projects", http.StatusInternalServerError)
 			return
@@ -129,7 +129,7 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		err = db.QueryRow(ctx,
 			`SELECT id, name, description, created_at, updated_at
 			 FROM projects
-			 WHERE id = $1 AND user_id = $2`,
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
 			id, user.ID,
 		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
@@ -204,8 +204,8 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		id, err := parseID(r)
-		if err != nil {
+		id, err := parseID(r) // your existing helper
+		if err != nil || id <= 0 {
 			http.Error(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
@@ -213,17 +213,43 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tag, err := db.Exec(ctx,
-			`DELETE FROM projects WHERE id = $1 AND user_id = $2`,
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		// 1) soft delete project (only if not already deleted)
+		tag, err := tx.Exec(ctx,
+			`UPDATE projects
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
 			id, user.ID,
 		)
-
 		if err != nil {
 			http.Error(w, "failed to delete project", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
 			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		// 2) soft delete tasks under project (only tasks not already deleted)
+		_, err = tx.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			id, user.ID,
+		)
+		if err != nil {
+			http.Error(w, "failed to delete project tasks", http.StatusInternalServerError)
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			http.Error(w, "failed to commit project delete", http.StatusInternalServerError)
 			return
 		}
 
