@@ -1,6 +1,7 @@
 package api
 
 import (
+	"GoToDo/internal/api/projects"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,9 @@ func NewRouter(deps app.Deps) chi.Router {
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(authmw.RequireAdmin) // only extra requirement
 				admin.Routes(r, deps)
+			})
+			r.Route("/projects", func(r chi.Router) {
+				projects.Routes(r, deps)
 			})
 		})
 	})
