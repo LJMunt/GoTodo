@@ -16,7 +16,6 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 	}
 
 	cfg, err := pgxpool.ParseConfig(dsn)
-
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool.ParseConfig: %w", err)
 	}
@@ -28,17 +27,45 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 	cfg.MaxConnIdleTime = 10 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("pgxpool.NewWithConfig: %w", err)
-	}
-	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer pingCancel()
+	const (
+		maxAttempts = 30
+		delay       = 500 * time.Millisecond
+	)
 
-	if err := pool.Ping(pingCtx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("ping: %w", err)
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err == nil {
+			pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err = pool.Ping(pingCtx)
+			cancel()
+
+			if err == nil {
+				return pool, nil
+			}
+
+			pool.Close()
+			lastErr = fmt.Errorf("ping failed: %w", err)
+		} else {
+			lastErr = fmt.Errorf("pgxpool.NewWithConfig: %w", err)
+		}
+
+		// Stop retrying if context was cancelled
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		// Wait before retrying (unless this was the last attempt)
+		if attempt < maxAttempts {
+			time.Sleep(delay)
+		}
 	}
 
-	return pool, nil
+	return nil, fmt.Errorf(
+		"database not ready after %d attempts (~%s): %w",
+		maxAttempts,
+		time.Duration(maxAttempts)*delay,
+		lastErr,
+	)
 }

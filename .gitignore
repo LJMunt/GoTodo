@@ -18,6 +18,7 @@ go.work.sum
 
 # JetBrains
 .idea/
+.run/
 qodana.yaml
 
 # OS
