@@ -29,6 +29,9 @@ func Routes(r chi.Router, deps app.Deps) {
 		r.Route("/{userId}/projects/{projectId}/tasks", func(r chi.Router) {
 			r.Get("/", ListProjectTasksHandler(deps.DB))
 		})
-
+		r.Route("/{userId}/tags", func(r chi.Router) {
+			r.Get("/", ListUserTagsHandler(deps.DB))
+			r.Delete("/{tagId}", DeleteUserTagHandler(deps.DB))
+		})
 	})
 }

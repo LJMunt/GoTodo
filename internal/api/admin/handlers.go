@@ -47,6 +47,13 @@ type TaskResponse struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type TagResponse struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func parseInt64Param(r *http.Request, key string) (int64, error) {
 	s := chi.URLParam(r, key)
 	return strconv.ParseInt(s, 10, 64)
@@ -753,6 +760,86 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		if tag.RowsAffected() == 0 {
 			http.Error(w, "task not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `
+			SELECT id, name, created_at, updated_at
+			FROM tags
+			WHERE user_id = $1`
+		args := []any{userID}
+		if q != "" {
+			query += ` AND name ILIKE '%' || $2 || '%'`
+			args = append(args, q)
+		}
+		query += ` ORDER BY name, id`
+
+		rows, err := db.Query(ctx, query, args...)
+		if err != nil {
+			http.Error(w, "failed to list tags", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TagResponse, 0, 64)
+		for rows.Next() {
+			var t TagResponse
+			if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.UpdatedAt); err != nil {
+				http.Error(w, "failed to read tags", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "failed to read tags", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := parseInt64Param(r, "userId")
+		if err != nil || userID <= 0 {
+			http.Error(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		tagID, err := parseInt64Param(r, "tagId")
+		if err != nil || tagID <= 0 {
+			http.Error(w, "invalid tag id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `DELETE FROM tags WHERE id = $1 AND user_id = $2`
+		tag, err := db.Exec(ctx, query, tagID, userID)
+		if err != nil {
+			http.Error(w, "failed to delete tag", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			http.Error(w, "tag not found", http.StatusNotFound)
 			return
 		}
 
