@@ -3,6 +3,12 @@ End-to-end API smoke test for GoTodo.
 
 Runs auth + admin lifecycle tests.
 Intended for local dev and CI.
+
+Run Config for Dev in Goland:
+1. Create test@example.com user via API
+2. Set this user as admin
+3. Use these parameters:
+--base-url http://localhost:8081 --admin-email test@example.com --admin-password password123
 """
 
 from __future__ import annotations
