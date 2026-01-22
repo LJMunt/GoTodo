@@ -15,5 +15,9 @@ func Routes(r chi.Router, deps app.Deps) {
 
 		r.Get("/{taskId}/tags", GetTaskTagsHandler(deps.DB))
 		r.Put("/{taskId}/tags", PutTaskTagsHandler(deps.DB))
+
+		// Occurrences (recurring tasks)
+		r.Get("/{taskId}/occurrences", ListTaskOccurrencesHandler(deps.DB))
+		r.Patch("/{taskId}/occurrences/{occurrenceId}", UpdateTaskOccurrenceHandler(deps.DB))
 	})
 }
