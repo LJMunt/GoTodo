@@ -19,7 +19,7 @@ func main() {
 	//DB Connection
 	pool, err := db.Connect(ctx)
 	if err != nil {
-		log.Fatal("db connect failed: %v", err)
+		log.Fatalf("db connect failed: %v", err)
 	}
 	defer pool.Close()
 

@@ -1,6 +1,10 @@
 package api
 
 import (
+	"GoToDo/internal/api/agenda"
+	"GoToDo/internal/api/projects"
+	"GoToDo/internal/api/tags"
+	"GoToDo/internal/api/tasks"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +26,7 @@ func NewRouter(deps app.Deps) chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
+	r.Use(middleware.CleanPath)
 
 	// Routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -43,6 +48,18 @@ func NewRouter(deps app.Deps) chi.Router {
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(authmw.RequireAdmin) // only extra requirement
 				admin.Routes(r, deps)
+			})
+			r.Route("/projects", func(r chi.Router) {
+				projects.Routes(r, deps)
+			})
+			r.Route("/tags", func(r chi.Router) {
+				tags.Routes(r, deps)
+			})
+			r.Route("/agenda", func(r chi.Router) {
+				agenda.Routes(r, deps)
+			})
+			r.Group(func(r chi.Router) {
+				tasks.Routes(r, deps)
 			})
 		})
 	})
