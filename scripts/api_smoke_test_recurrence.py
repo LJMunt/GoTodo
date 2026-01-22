@@ -144,8 +144,6 @@ class TestRecurrenceAPI(unittest.TestCase):
         
         # Invalid repeat_unit
         due_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        resp = self.api.create_task(self.token, self.project_id, "Invalid Unit", 
-                                   due_at=due_at, repeat_every=1, repeat_unit="decade")
         # The backend might accept it and then fail during occurrence generation
         # or have a list of valid units. occurrences.go shows day, week, month.
         # Let's see what the handler does.

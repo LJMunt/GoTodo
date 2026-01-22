@@ -26,7 +26,7 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiError{Error: msg})
 }
 
-type AgendaItem struct {
+type Item struct {
 	Kind         string `json:"kind"` // "task" | "occurrence"
 	TaskID       int64  `json:"task_id"`
 	OccurrenceID *int64 `json:"occurrence_id,omitempty"`
@@ -175,7 +175,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     AND o.completed_at IS NULL
 			     AND o.due_at >= $2 AND o.due_at <= $3
 			 ) x
-			 ORDER BY due_at ASC, task_id ASC, occurrence_id ASC NULLS FIRST`,
+			 ORDER BY due_at, task_id, occurrence_id NULLS FIRST`,
 			user.ID, from, to,
 		)
 		if err != nil {
@@ -184,7 +184,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		defer rows2.Close()
 
-		out := make([]AgendaItem, 0, 128)
+		out := make([]Item, 0, 128)
 		for rows2.Next() {
 			var (
 				kind      string
@@ -200,7 +200,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 				return
 			}
 
-			out = append(out, AgendaItem{
+			out = append(out, Item{
 				Kind:         kind,
 				TaskID:       taskID,
 				OccurrenceID: occID,

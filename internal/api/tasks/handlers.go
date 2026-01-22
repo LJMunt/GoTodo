@@ -542,7 +542,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Apply due changes depending on type
-		var newDueAt *time.Time = curDueAt
+		var newDueAt = curDueAt
 		if clearDue {
 			newDueAt = nil
 		} else if req.DueAt != nil {
@@ -551,7 +551,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Completion timestamp for non-recurring tasks only
-		var newCompletedAt *time.Time = curCompletedAt
+		var newCompletedAt = curCompletedAt
 		if req.Completed != nil {
 			if *req.Completed {
 				now := time.Now().UTC()
@@ -561,8 +561,8 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		var newRecStart *time.Time = curRecStart
-		var newNextDue *time.Time = curNextDue
+		var newRecStart = curRecStart
+		var newNextDue = curNextDue
 		var storedTasksDueAt *time.Time // what goes into tasks.due_at column
 
 		switch {
