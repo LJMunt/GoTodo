@@ -1,14 +1,40 @@
-name: Build
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gotodo
+          POSTGRES_PASSWORD: gotodo
+          POSTGRES_DB: gotodo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U gotodo -d gotodo"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      PORT: "8081"
+      DATABASE_URL: "postgres://gotodo:gotodo@localhost:5432/gotodo?sslmode=disable"
+
+      # Smoke test admin creds (CI only)
+      ADMIN_EMAIL: "admin-ci@example.com"
+      ADMIN_PASSWORD: "password123"
+
+      # Base URL for smoke test
+      BASE_URL: "http://localhost:8081"
 
     steps:
       - name: Checkout code
@@ -22,5 +48,77 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Run unit tests
+        run: go test ./...
+
+      # Install migrate (golang-migrate)
+      - name: Install migrate
+        run: |
+          curl -sSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
+            | tar -xz
+          sudo mv migrate /usr/local/bin/migrate
+          migrate -version
+
+      - name: Apply DB migrations
+        run: |
+          migrate -path internal/db/migrations -database "$DATABASE_URL" up
+
       - name: Build
         run: go build ./...
+
+      # Start server in background
+      - name: Start API server
+        run: |
+          nohup go run ./cmd/server > server.log 2>&1 &
+          echo "Server PID: $!"
+          
+          for i in {1..40}; do
+            if curl -fsS "$BASE_URL/api/v1/ready" >/dev/null; then
+              echo "Server is ready."
+              exit 0
+            fi
+            echo "Waiting for server..."
+            sleep 1
+          done
+
+          echo "Server did not become ready in time."
+          echo "---- server.log ----"
+          tail -200 server.log || true
+          exit 1
+
+      # Bootstrap admin user for smoke test:
+      # 1) call signup endpoint
+      # 2) flip is_admin=true directly in DB
+      - name: Bootstrap admin user
+        run: |
+          # Create admin user via API
+          curl -fsS -X POST "$BASE_URL/api/v1/auth/signup" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
+            >/dev/null || true
+
+          # Promote to admin in DB
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y postgresql-client >/dev/null
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+            "UPDATE users SET is_admin = true WHERE email = '$ADMIN_EMAIL';"
+
+      - name: Run API smoke test
+        run: |
+          python3 -V
+
+          # If your smoke test uses requests, install it.
+          # If it uses only stdlib, this is harmless.
+
+          python3 api_smoke_test.py \
+            --base-url "$BASE_URL" \
+            --admin-email "$ADMIN_EMAIL" \
+            --admin-password "$ADMIN_PASSWORD"
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log
