@@ -51,7 +51,7 @@ components:
         name:
           type: string
         description:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
         created_at:
           type: string
           format: date-time
@@ -75,23 +75,23 @@ components:
         title:
           type: string
         description:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
         due_at:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           format: date-time
         completed_at:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           format: date-time
         deleted_at:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           format: date-time
         repeat_every:
-          type: [integer, "null"]
+          oneOf: [{type: integer}, {type: "null"}]
         repeat_unit:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           enum: [day, week, month, null]
         recurrence_start_at:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           format: date-time
         created_at:
           type: string
@@ -130,7 +130,7 @@ components:
           type: string
           format: date-time
         completed_at:
-          type: [string, "null"]
+          oneOf: [{type: string}, {type: "null"}]
           format: date-time
       required: [id, task_id, due_at]
 
@@ -144,7 +144,7 @@ components:
           type: integer
           format: int64
         occurrence_id:
-          type: [integer, "null"]
+          oneOf: [{type: integer}, {type: "null"}]
           format: int64
         project_id:
           type: integer
@@ -287,7 +287,7 @@ paths:
                 name:
                   type: string
                 description:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
               required:
                 - name
       responses:
@@ -333,7 +333,7 @@ paths:
                 name:
                   type: string
                 description:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
       responses:
         "204":
           description: Project updated
@@ -380,14 +380,14 @@ paths:
                 title:
                   type: string
                 description:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                 due_at:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                   format: date-time
                 repeat_every:
-                  type: [integer, "null"]
+                  oneOf: [{type: integer}, {type: "null"}]
                 repeat_unit:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                   enum: [day, week, month, null]
               required:
                 - title
@@ -428,19 +428,19 @@ paths:
                 title:
                   type: string
                 description:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                 project_id:
                   type: integer
                   format: int64
                 due_at:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                   format: date-time
                 completed:
-                  type: [boolean, "null"]
+                  oneOf: [{type: boolean}, {type: "null"}]
                 repeat_every:
-                  type: [integer, "null"]
+                  oneOf: [{type: integer}, {type: "null"}]
                 repeat_unit:
-                  type: [string, "null"]
+                  oneOf: [{type: string}, {type: "null"}]
                   enum: [day, week, month, null]
       responses:
         "204":
@@ -745,11 +745,19 @@ paths:
       responses:
         "200":
           description: Project info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
     patch:
       summary: Update user project (Admin only)
       responses:
         "200":
           description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
     delete:
       summary: Delete user project (Admin only)
       responses:
@@ -789,6 +797,12 @@ paths:
       responses:
         "200":
           description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
 
   /api/v1/admin/users/{userId}/tasks/{taskId}:
     parameters:
@@ -849,6 +863,12 @@ paths:
       responses:
         "200":
           description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
 
   /api/v1/admin/users/{userId}/tags:
     parameters:
@@ -863,6 +883,12 @@ paths:
       responses:
         "200":
           description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
 
   /api/v1/admin/users/{userId}/tags/{tagId}:
     parameters:
