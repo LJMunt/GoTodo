@@ -1,6 +1,7 @@
 package api
 
 import (
+	"GoToDo/internal/api/agenda"
 	"GoToDo/internal/api/projects"
 	"GoToDo/internal/api/tags"
 	"GoToDo/internal/api/tasks"
@@ -53,6 +54,9 @@ func NewRouter(deps app.Deps) chi.Router {
 			})
 			r.Route("/tags", func(r chi.Router) {
 				tags.Routes(r, deps)
+			})
+			r.Route("/agenda", func(r chi.Router) {
+				agenda.Routes(r, deps)
 			})
 			r.Group(func(r chi.Router) {
 				tasks.Routes(r, deps)
