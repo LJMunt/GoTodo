@@ -234,10 +234,11 @@ class GoToDoAPI:
         return self.http.request("POST", f"/api/v1/admin/users/{user_id}/projects/{project_id}/restore", token=admin_token)
 
     # ---- tasks ----
-    def create_task(self, token: str, project_id: int, title: str, description: Optional[str] = None) -> HTTPResponse:
+    def create_task(self, token: str, project_id: int, title: str, description: Optional[str] = None, **kwargs) -> HTTPResponse:
         body = {"title": title}
         if description:
             body["description"] = description
+        body.update(kwargs)
         return self.http.request("POST", f"/api/v1/projects/{project_id}/tasks", token=token, json_body=body)
 
     def list_project_tasks(self, token: str, project_id: int) -> HTTPResponse:
@@ -283,6 +284,18 @@ class GoToDoAPI:
 
     def admin_delete_user_tag(self, admin_token: str, user_id: int, tag_id: int) -> HTTPResponse:
         return self.http.request("DELETE", f"/api/v1/admin/users/{user_id}/tags/{tag_id}", token=admin_token)
+
+    def list_occurrences(self, token: str, task_id: int, from_time: Optional[str] = None, to_time: Optional[str] = None) -> HTTPResponse:
+        path = f"/api/v1/tasks/{task_id}/occurrences"
+        params = []
+        if from_time: params.append(f"from={from_time}")
+        if to_time: params.append(f"to={to_time}")
+        if params:
+            path += "?" + "&".join(params)
+        return self.http.request("GET", path, token=token)
+
+    def update_occurrence(self, token: str, task_id: int, occurrence_id: int, completed: bool) -> HTTPResponse:
+        return self.http.request("PATCH", f"/api/v1/tasks/{task_id}/occurrences/{occurrence_id}", token=token, json_body={"completed": completed})
 
     def wait_ready(self, timeout_sec: float = 10.0, interval_sec: float = 0.25) -> None:
         deadline = time.time() + timeout_sec
@@ -335,6 +348,7 @@ class SmokeTestRunner:
         try:
             self.test_project_management(ctx)
             self.test_task_management(ctx)
+            self.test_recurrence(ctx)
         finally:
             log("Cleaning up: setting smoketest user as inactive")
             self.api.admin_update_user(ctx.admin_token, ctx.user_id, {"is_active": False})
@@ -350,12 +364,12 @@ class SmokeTestRunner:
         user_new_password: str,
     ) -> TestContext:
         # 1) Health/ready
-        log("[1/42] health + ready")
+        log("[1/43] health + ready")
         expect_status(self.api.health(), 200, "GET /health")
         expect_status(self.api.ready(), 200, "GET /ready")
 
         # 2) Login admin (admin must already exist and be admin in DB)
-        log("[2/42] admin login")
+        log("[2/43] admin login")
         admin_login = self.api.login(admin_email, admin_password)
         expect_status(admin_login, 200, "POST /auth/login (admin)")
         admin_token = admin_login.json().get("token")
@@ -369,13 +383,13 @@ class SmokeTestRunner:
             if "@" not in user_email_prefix
             else user_email_prefix.replace("@", f"+{uniq}@")
         )
-        log(f"[3/42] signup user: {user_email}")
+        log(f"[3/43] signup user: {user_email}")
         signup = self.api.signup(user_email, user_password)
         # Depending on your signup handler, you may return 201 with user json (and possibly a token).
         expect_status(signup, 201, "POST /auth/signup (user)")
 
         # 4) Login as the new user
-        log("[4/42] user login")
+        log("[4/43] user login")
         user_login = self.api.login(user_email, user_password)
         expect_status(user_login, 200, "POST /auth/login (user)")
         user_token = user_login.json().get("token")
@@ -383,7 +397,7 @@ class SmokeTestRunner:
             raise TestFailure("User login did not return a token")
 
         # 5) /me should work and return id
-        log("[5/42] GET /users/me")
+        log("[5/43] GET /users/me")
         me = self.api.me(user_token)
         expect_status(me, 200, "GET /users/me")
         me_json = me.json()
@@ -393,23 +407,23 @@ class SmokeTestRunner:
             raise TestFailure(f"/me did not return integer id. Got: {user_id}")
 
         # 6) Admin disables user (soft delete)
-        log("[6/42] admin disables user (soft delete)")
+        log("[6/43] admin disables user (soft delete)")
         disable = self.api.admin_disable_user(admin_token, user_id)
         expect_status(disable, 204, "DELETE /admin/users/{id}")
 
         # 7) Disabled user should fail login (your login returns 401 for invalid/disabled)
-        log("[7/42] disabled user cannot login")
+        log("[7/43] disabled user cannot login")
         disabled_login = self.api.login(user_email, user_password)
         expect_status(disabled_login, 401, "POST /auth/login (disabled user)")
 
         # 8) Admin re-enables user
-        log("[8/42] admin re-enables user")
+        log("[8/43] admin re-enables user")
         enable = self.api.admin_update_user(admin_token, user_id, {"is_active": True})
         expect_status_in(enable, (200, 204), "PATCH /admin/users/{id} (enable)")
         self.vlog(f"enable response: {enable.json()}")
 
         # 9) User can login again, then admin changes password, then user can login with new password
-        log("[9/42] password change cycle")
+        log("[9/43] password change cycle")
         user_login2 = self.api.login(user_email, user_password)
         expect_status(user_login2, 200, "POST /auth/login (re-enabled user)")
         user_token2 = user_login2.json().get("token")
@@ -434,7 +448,7 @@ class SmokeTestRunner:
             raise TestFailure("New password login did not return a token")
 
         # 10) Non-admin user must not access admin endpoint
-        log("[10/42] user forbidden from admin endpoints")
+        log("[10/43] user forbidden from admin endpoints")
         admin_list_as_user = self.api.admin_list_users(user_token3)
         expect_status(admin_list_as_user, 403, "GET /admin/users (as non-admin)")
 
@@ -447,7 +461,7 @@ class SmokeTestRunner:
 
     def test_project_management(self, ctx: TestContext) -> None:
         # 11) smoke-test user makes new project
-        log("[11/42] user creates project")
+        log("[11/43] user creates project")
         create_proj = self.api.create_project(
             ctx.user_token, "My Project v1", "My Description"
         )
@@ -464,13 +478,13 @@ class SmokeTestRunner:
         )
 
         # 12) smoke-test user gets project
-        log("[12/42] user gets project")
+        log("[12/43] user gets project")
         get_proj = self.api.get_project(ctx.user_token, project1.id)
         expect_status(get_proj, 200, "GET /projects/{id}")
         self.vlog(f"get project response: {get_proj.json()}")
 
         # 13) smoke-test user lists all project
-        log("[13/42] user lists projects")
+        log("[13/43] user lists projects")
         list_projs = self.api.list_projects(ctx.user_token)
         expect_status(list_projs, 200, "GET /projects")
         projs = list_projs.json()
@@ -478,24 +492,24 @@ class SmokeTestRunner:
             raise TestFailure(f"Project {project1.id} not found in project list")
 
         # 14) smoke-test user updates project
-        log("[14/42] user updates project")
+        log("[14/43] user updates project")
         update_proj = self.api.update_project(
             ctx.user_token, project1.id, {"name": "Updated Project"}
         )
         expect_status_in(update_proj, (200, 204), "PATCH /projects/{id}")
 
         # 15) smoke-test user deletes project
-        log("[15/42] user deletes project")
+        log("[15/43] user deletes project")
         delete_proj = self.api.delete_project(ctx.user_token, project1.id)
         expect_status_in(delete_proj, (200, 204), "DELETE /projects/{id}")
 
         # 16) smoke-test user gets project -> must fail
-        log("[16/42] user gets deleted project (must fail)")
+        log("[16/43] user gets deleted project (must fail)")
         get_deleted_proj = self.api.get_project(ctx.user_token, project1.id)
         expect_status(get_deleted_proj, 404, "GET /projects/{id} (deleted)")
 
         # 17) smoke-test user makes new project
-        log("[17/42] user creates another project")
+        log("[17/43] user creates another project")
         create_proj2 = self.api.create_project(ctx.user_token, "Admin Test Project")
         expect_status(create_proj2, 201, "POST /projects")
         proj_data2 = create_proj2.json()
@@ -507,7 +521,7 @@ class SmokeTestRunner:
             updated_at=proj_data2.get("updated_at"),
         )
 
-        log("[18/42] admin lists user's projects")
+        log("[18/43] admin lists user's projects")
         admin_list_projs = self.api.admin_list_user_projects(
             ctx.admin_token, ctx.user_id
         )
@@ -519,7 +533,7 @@ class SmokeTestRunner:
             )
 
         # 19) admin gets the project
-        log("[19/42] admin gets user's project")
+        log("[19/43] admin gets user's project")
         admin_get_proj = self.api.admin_get_user_project(
             ctx.admin_token, ctx.user_id, project2.id
         )
@@ -528,7 +542,7 @@ class SmokeTestRunner:
         )
 
         # 20) admin updates project
-        log("[20/42] admin updates user's project")
+        log("[20/43] admin updates user's project")
         admin_update_proj = self.api.admin_update_user_project(
             ctx.admin_token, ctx.user_id, project2.id, {"description": "Admin updated this"}
         )
@@ -537,7 +551,7 @@ class SmokeTestRunner:
         )
 
         # 21) admin deletes project
-        log("[21/42] admin deletes user's project")
+        log("[21/43] admin deletes user's project")
         admin_delete_proj = self.api.admin_delete_user_project(
             ctx.admin_token, ctx.user_id, project2.id
         )
@@ -546,7 +560,7 @@ class SmokeTestRunner:
         )
 
         # 22) admin gets project -> must fail
-        log("[22/42] admin gets deleted project (must fail)")
+        log("[22/43] admin gets deleted project (must fail)")
         admin_get_deleted_proj = self.api.admin_get_user_project(
             ctx.admin_token, ctx.user_id, project2.id
         )
@@ -558,13 +572,13 @@ class SmokeTestRunner:
 
     def test_task_management(self, ctx: TestContext) -> None:
         # 23) User creates Project
-        log("[23/42] user creates project for task tests")
+        log("[23/43] user creates project for task tests")
         create_p3 = self.api.create_project(ctx.user_token, "Task Test Project")
         expect_status(create_p3, 201, "POST /projects")
         project3 = Project(id=create_p3.json()["id"], name="Task Test Project")
 
         # 24) User creates task in project
-        log("[24/42] user creates task in project")
+        log("[24/43] user creates task in project")
         create_t = self.api.create_task(
             ctx.user_token, project3.id, "My Task", "My Task Desc"
         )
@@ -578,7 +592,7 @@ class SmokeTestRunner:
         )
 
         # 25) User lists tasks
-        log("[25/42] user lists tasks in project")
+        log("[25/43] user lists tasks in project")
         list_t = self.api.list_project_tasks(ctx.user_token, project3.id)
         expect_status(list_t, 200, "GET /projects/{projectId}/tasks")
         tasks = list_t.json()
@@ -586,12 +600,12 @@ class SmokeTestRunner:
             raise TestFailure(f"Task {task1.id} not found in task list")
 
         # 26) User gets task he created
-        log("[26/42] user gets task")
+        log("[26/43] user gets task")
         get_t = self.api.get_task(ctx.user_token, task1.id)
         expect_status(get_t, 200, "GET /tasks/{id}")
 
         # 27) User updates task title & description
-        log("[27/42] user updates task title & description")
+        log("[27/43] user updates task title & description")
         update_t = self.api.update_task(
             ctx.user_token,
             task1.id,
@@ -600,24 +614,24 @@ class SmokeTestRunner:
         expect_status_in(update_t, (200, 204), "PATCH /tasks/{id} (title/desc)")
 
         # 28) User updates task as complete
-        log("[28/42] user updates task as complete")
+        log("[28/43] user updates task as complete")
         complete_t = self.api.update_task(ctx.user_token, task1.id, {"is_completed": True})
         expect_status_in(complete_t, (200, 204), "PATCH /tasks/{id} (complete)")
 
         # 29) User updates task as incomplete
-        log("[29/42] user updates task as incomplete")
+        log("[29/43] user updates task as incomplete")
         incomplete_t = self.api.update_task(
             ctx.user_token, task1.id, {"is_completed": False}
         )
         expect_status_in(incomplete_t, (200, 204), "PATCH /tasks/{id} (incomplete)")
 
         # 30) User deletes Task
-        log("[30/42] user deletes task")
+        log("[30/43] user deletes task")
         del_t = self.api.delete_task(ctx.user_token, task1.id)
         expect_status_in(del_t, (200, 204), "DELETE /tasks/{id}")
 
         # 31) Admin restores Task
-        log("[31/42] admin restores task")
+        log("[31/43] admin restores task")
         restore_t = self.api.admin_restore_user_task(
             ctx.admin_token, ctx.user_id, task1.id
         )
@@ -626,34 +640,34 @@ class SmokeTestRunner:
         )
 
         # 32) User creates tag
-        log("[32/42] user creates tag")
+        log("[32/43] user creates tag")
         tag_resp = self.api.create_tag(ctx.user_token, "Tag 1")
         expect_status(tag_resp, 201, "POST /tags")
         tag1_id = tag_resp.json()["id"]
 
         # 33) User adds tag to task
-        log("[33/42] user adds tag to task")
+        log("[33/43] user adds tag to task")
         add_tag_resp = self.api.update_task_tags(ctx.user_token, task1.id, [tag1_id])
         expect_status(add_tag_resp, 200, "PUT /tasks/{id}/tags")
 
         # 34) User updates tag
-        log("[34/42] user updates tag")
+        log("[34/43] user updates tag")
         upd_tag_resp = self.api.update_tag(ctx.user_token, tag1_id, "Tag 1 Updated")
         expect_status_in(upd_tag_resp, (200, 204), "PATCH /tags/{id}")
 
         # 35) User deletes tag
-        log("[35/42] user deletes tag")
+        log("[35/43] user deletes tag")
         del_tag_resp = self.api.delete_tag(ctx.user_token, tag1_id)
         expect_status_in(del_tag_resp, (200, 204), "DELETE /tags/{id}")
 
         # 36) User adds tag
-        log("[36/42] user adds tag")
+        log("[36/43] user adds tag")
         tag2_resp = self.api.create_tag(ctx.user_token, "Tag 2")
         expect_status(tag2_resp, 201, "POST /tags")
         tag2_id = tag2_resp.json()["id"]
 
         # 37) Admin lists tags of user
-        log("[37/42] admin lists tags of user")
+        log("[37/43] admin lists tags of user")
         admin_tags_resp = self.api.admin_list_user_tags(ctx.admin_token, ctx.user_id)
         expect_status(admin_tags_resp, 200, "GET /admin/users/{id}/tags")
         admin_tags = admin_tags_resp.json()
@@ -661,12 +675,12 @@ class SmokeTestRunner:
             raise TestFailure(f"Tag {tag2_id} not found in admin tag list")
 
         # 38) Admin deletes tag
-        log("[38/42] admin deletes tag")
+        log("[38/43] admin deletes tag")
         admin_del_tag = self.api.admin_delete_user_tag(ctx.admin_token, ctx.user_id, tag2_id)
         expect_status_in(admin_del_tag, (200, 204), "DELETE /admin/users/{uId}/tags/{tId}")
 
         # 39) Admin deletes Task
-        log("[39/42] admin deletes task")
+        log("[39/43] admin deletes task")
         admin_del_t = self.api.admin_delete_user_task(
             ctx.admin_token, ctx.user_id, task1.id
         )
@@ -675,12 +689,12 @@ class SmokeTestRunner:
         )
 
         # 40) User deletes project
-        log("[40/42] user deletes project")
+        log("[40/43] user deletes project")
         del_p3 = self.api.delete_project(ctx.user_token, project3.id)
         expect_status_in(del_p3, (200, 204), "DELETE /projects/{id}")
 
         # 41) Admin restores project
-        log("[41/42] admin restores project")
+        log("[41/43] admin restores project")
         restore_p3 = self.api.admin_restore_user_project(
             ctx.admin_token, ctx.user_id, project3.id
         )
@@ -691,7 +705,7 @@ class SmokeTestRunner:
         )
 
         # 42) Admin deletes project
-        log("[42/42] admin deletes project")
+        log("[42/43] admin deletes project")
         admin_del_p3 = self.api.admin_delete_user_project(
             ctx.admin_token, ctx.user_id, project3.id
         )
@@ -700,6 +714,52 @@ class SmokeTestRunner:
             (200, 204),
             "DELETE /admin/users/{userId}/projects/{projectId}",
         )
+
+    def test_recurrence(self, ctx: TestContext) -> None:
+        import datetime
+        # 43) Recurrence lifecycle
+        log("[43/43] recurrence lifecycle")
+
+        # Create a project for recurrence tests
+        resp = self.api.create_project(ctx.user_token, "Recurrence Project")
+        expect_status(resp, 201, "POST /projects (recurrence)")
+        project_id = resp.json()["id"]
+
+        # 1. Create a daily recurring task
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        due_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        resp = self.api.create_task(ctx.user_token, project_id, "Daily Task",
+                                   due_at=due_at, repeat_every=1, repeat_unit="day")
+        expect_status(resp, 201, "POST /projects/{id}/tasks (daily recurring)")
+        task = resp.json()
+        task_id = task["id"]
+
+        # 2. List occurrences for the next 7 days
+        to_time = (now + datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        resp = self.api.list_occurrences(ctx.user_token, task_id, to_time=to_time)
+        expect_status(resp, 200, "GET /tasks/{id}/occurrences")
+        occurrences = resp.json()
+        if len(occurrences) < 7:
+            raise TestFailure(f"Expected at least 7 occurrences, got {len(occurrences)}")
+
+        # 3. Complete the first occurrence
+        occ0 = occurrences[0]
+        resp = self.api.update_occurrence(ctx.user_token, task_id, occ0["id"], True)
+        expect_status(resp, 200, "PATCH /tasks/{id}/occurrences/{occId}")
+        if resp.json().get("completed_at") is None:
+            raise TestFailure("Occurrence completed_at should not be null after update")
+
+        # 4. Check if task.next_due_at updated
+        resp = self.api.get_task(ctx.user_token, task_id)
+        expect_status(resp, 200, "GET /tasks/{id}")
+        updated_task = resp.json()
+        if not updated_task.get("next_due_at"):
+            raise TestFailure("Task next_due_at should be set for recurring task")
+        if updated_task["next_due_at"] == occ0["due_at"]:
+             raise TestFailure("Task next_due_at should have updated after completing occurrence")
+
+        log("✅ Recurrence tests passed.")
 
 
 def main() -> int:
