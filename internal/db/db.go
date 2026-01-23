@@ -6,8 +6,33 @@ import (
 	"os"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func Migrate(dsn string, migrationsPath string) error {
+	m, err := migrate.New(
+		"file://"+migrationsPath,
+		dsn,
+	)
+	if err != nil {
+		return fmt.Errorf("could not create migrate instance: %w", err)
+	}
+	defer func(m *migrate.Migrate) {
+		err, _ := m.Close()
+		if err != nil {
+			fmt.Printf("failed to close migrate instance: %v\n", err)
+		}
+	}(m)
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("could not run up migrations: %w", err)
+	}
+
+	return nil
+}
 
 func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 	dsn := os.Getenv("DATABASE_URL")
