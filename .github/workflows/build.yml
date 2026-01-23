@@ -125,5 +125,3 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
               ${{ env.IMAGE_NAME }}:latest
-              ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
