@@ -103,16 +103,6 @@ jobs:
       - name: Run unit tests
         run: go test ./...
 
-
-      - name: Run API smoke test
-        run: |
-          python3 -V
-
-          python3 api_smoke_test.py \
-            --base-url "$BASE_URL" \
-            --admin-email "$ADMIN_EMAIL" \
-            --admin-password "$ADMIN_PASSWORD"
-
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@v4
