@@ -27,34 +27,11 @@ jobs:
       - name: Validate OpenAPI
         run: npx -y @redocly/cli@latest lint docs/openapi.yml
 
-      - name: Build Swagger UI static site
+      - name: Build Redoc HTML
         run: |
           mkdir -p site
+          npx -y @redocly/cli@latest build-docs docs/openapi.yml -o site/index.html
           cp docs/openapi.yml site/openapi.yml
-
-          cat > site/index.html << 'EOF'
-          <!doctype html>
-          <html>
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>GoTodo API Docs</title>
-              <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
-            </head>
-            <body>
-              <div id="swagger-ui"></div>
-              <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
-              <script>
-                window.ui = SwaggerUIBundle({
-                  url: "openapi.yml",
-                  dom_id: "#swagger-ui",
-                  presets: [SwaggerUIBundle.presets.apis],
-                  layout: "BaseLayout"
-                });
-              </script>
-            </body>
-          </html>
-          EOF
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

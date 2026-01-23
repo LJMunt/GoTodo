@@ -82,24 +82,6 @@ jobs:
           tail -200 server.log || true
           exit 1
 
-      # Bootstrap admin user for smoke test:
-      # 1) call signup endpoint
-      # 2) flip is_admin=true directly in DB
-      - name: Bootstrap admin user
-        run: |
-          # Create admin user via API
-          curl -fsS -X POST "$BASE_URL/api/v1/auth/signup" \
-            -H "Content-Type: application/json" \
-            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
-            >/dev/null || true
-
-          # Promote to admin in DB
-          sudo apt-get update -y >/dev/null
-          sudo apt-get install -y postgresql-client >/dev/null
-
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
-            "UPDATE users SET is_admin = true WHERE email = '$ADMIN_EMAIL';"
-
       - name: Run unit tests
         run: go test ./...
 
