@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 jobs:
-  ci:
+  build:
     runs-on: ubuntu-latest
 
     services:
@@ -48,10 +48,6 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run unit tests
-        run: go test ./...
-
-      # Install migrate (golang-migrate)
       - name: Install migrate
         run: |
           curl -sSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
@@ -103,6 +99,10 @@ jobs:
 
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
             "UPDATE users SET is_admin = true WHERE email = '$ADMIN_EMAIL';"
+
+      - name: Run unit tests
+        run: go test ./...
+
 
       - name: Run API smoke test
         run: |
