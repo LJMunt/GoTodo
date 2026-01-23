@@ -1,0 +1,1682 @@
+openapi: 3.1.0
+info:
+  title: GoTodo API
+  version: 0.3.0
+  description: |
+    Self-hostable task and project management API.
+
+servers:
+  - url: http://localhost:8081
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+          format: email
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+      required: [id, email, is_admin, is_active]
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          oneOf: [{type: string}, {type: "null"}]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, created_at, updated_at]
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        project_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        description:
+          oneOf: [{type: string}, {type: "null"}]
+        due_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
+        completed_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
+        deleted_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
+        repeat_every:
+          oneOf: [{type: integer}, {type: "null"}]
+        repeat_unit:
+          oneOf: [{type: string}, {type: "null"}]
+          enum: [day, week, month, "null"]
+        recurrence_start_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, user_id, project_id, title, created_at, updated_at]
+
+    Tag:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, user_id, name, created_at]
+
+    Occurrence:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        task_id:
+          type: integer
+          format: int64
+        due_at:
+          type: string
+          format: date-time
+        completed_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
+      required: [id, task_id, due_at]
+
+    AgendaItem:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [task, occurrence]
+        task_id:
+          type: integer
+          format: int64
+        occurrence_id:
+          oneOf: [{type: integer}, {type: "null"}]
+          format: int64
+        project_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        due_at:
+          type: string
+          format: date-time
+      required: [kind, task_id, project_id, title, due_at]
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missing_token:
+              value: {error: "missing token"}
+            invalid_token:
+              value: {error: "invalid token"}
+            not_authenticated:
+              value: {error: "not authenticated"}
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "forbidden: admin access required"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /api/v1/ready:
+    get:
+      summary: Readiness check
+      security: []
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: Service Unavailable
+
+  /api/v1/auth/signup:
+    post:
+      summary: User signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    format: int64
+                  email:
+                    type: string
+                  token:
+                    type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                email_required:
+                  value: {error: "email is required"}
+                password_too_short:
+                  value: {error: "password must be at least 8 characters"}
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "email already exists"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/login:
+    post:
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        "200":
+          description: JWT token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid request body"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid credentials"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/users/me:
+    get:
+      summary: Get current user info
+      responses:
+        "200":
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/projects:
+    get:
+      summary: List projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      summary: Create project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  oneOf: [{type: string}, {type: "null"}]
+              required:
+                - name
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                name_required:
+                  value: {error: "name is required"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          description: Project with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project with this name already exists"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: Get project
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid project id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      summary: Update project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  oneOf: [{type: string}, {type: "null"}]
+      responses:
+        "204":
+          description: Project updated
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete project
+      responses:
+        "204":
+          description: Project deleted
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid project id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/projects/{projectId}/tasks:
+    parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: List tasks in project
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid project id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      summary: Create task in project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  oneOf: [{type: string}, {type: "null"}]
+                due_at:
+                  oneOf: [{type: string}, {type: "null"}]
+                  format: date-time
+                repeat_every:
+                  oneOf: [{type: integer}, {type: "null"}]
+                repeat_unit:
+                  oneOf: [{type: string}, {type: "null"}]
+                  enum: [day, week, month, null]
+              required:
+                - title
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                title_required:
+                  value: {error: "title is required"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+                recurrence_mismatch:
+                  value: {error: "repeat_every and repeat_unit must be set together"}
+                negative_repeat:
+                  value: {error: "repeat_every must be > 0"}
+                due_at_required_recurring:
+                  value: {error: "due_at is required for recurring tasks"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: Get task
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid task id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      summary: Update task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  oneOf: [{type: string}, {type: "null"}]
+                project_id:
+                  type: integer
+                  format: int64
+                due_at:
+                  oneOf: [{type: string}, {type: "null"}]
+                  format: date-time
+                completed:
+                  oneOf: [{type: boolean}, {type: "null"}]
+                repeat_every:
+                  oneOf: [{type: integer}, {type: "null"}]
+                repeat_unit:
+                  oneOf: [{type: string}, {type: "null"}]
+                  enum: [day, week, month, null]
+      responses:
+        "204":
+          description: Task updated
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+                recurrence_mismatch:
+                  value: {error: "repeat_every and repeat_unit must be set together"}
+                negative_repeat:
+                  value: {error: "repeat_every must be > 0"}
+                due_at_required_recurring:
+                  value: {error: "due_at is required for recurring tasks"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task or Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                task_not_found:
+                  value: {error: "task not found"}
+                project_not_found:
+                  value: {error: "project not found"}
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete task
+      responses:
+        "204":
+          description: Task deleted
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid task id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tasks/{taskId}/tags:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: Get task tags
+      responses:
+        "200":
+          description: List of tags for the task
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid task id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      summary: Set task tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items:
+                    type: string
+              required:
+                - tags
+      responses:
+        "200":
+          description: Tags updated
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tasks/{taskId}/occurrences:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date-time
+    get:
+      summary: List task occurrences
+      responses:
+        "200":
+          description: List of occurrences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Occurrence'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+                invalid_from:
+                  value: {error: "invalid 'from' parameter"}
+                invalid_to:
+                  value: {error: "invalid 'to' parameter"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tasks/{taskId}/occurrences/{occurrenceId}:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: occurrenceId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      summary: Update task occurrence (e.g., complete it)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                completed:
+                  type: boolean
+              required:
+                - completed
+      responses:
+        "200":
+          description: Occurrence updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Occurrence'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+                invalid_occurrence_id:
+                  value: {error: "invalid occurrence id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Occurrence not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "occurrence not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tags:
+    get:
+      summary: List user tags
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      summary: Create tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required:
+                - name
+      responses:
+        "201":
+          description: Tag created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                name_required:
+                  value: {error: "name is required"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          description: Tag with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "tag with this name already exists"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/tags/{tagId}:
+    parameters:
+      - name: tagId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      summary: Rename tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        "200":
+          description: Tag renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_tag_id:
+                  value: {error: "invalid tag id"}
+                name_required:
+                  value: {error: "name is required"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Tag not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "tag not found"
+        "409":
+          description: Tag with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "tag with this name already exists"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete tag
+      responses:
+        "204":
+          description: Tag deleted
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid tag id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Tag not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "tag not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/agenda:
+    get:
+      summary: Get agenda
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: List of agenda items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgendaItem'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_from:
+                  value: {error: "invalid 'from' parameter"}
+                invalid_to:
+                  value: {error: "invalid 'to' parameter"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users:
+    get:
+      summary: List users (Admin only)
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: Get user (Admin only)
+      responses:
+        "200":
+          description: User info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      summary: Update user (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active:
+                  type: boolean
+                password:
+                  type: string
+      responses:
+        "200":
+          description: User updated
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_body:
+                  value: {error: "invalid request body"}
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete user (Admin only)
+      responses:
+        "204":
+          description: User deleted
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/projects:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: List user projects (Admin only)
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/projects/{projectId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: Get user project (Admin only)
+      responses:
+        "200":
+          description: Project info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      summary: Update user project (Admin only)
+      responses:
+        "200":
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Delete user project (Admin only)
+      responses:
+        "204":
+          description: Project deleted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/projects/{projectId}/restore:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Restore user project (Admin only)
+      responses:
+        "200":
+          description: Project restored
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "project not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/tasks:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: List user tasks (Admin only)
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/tasks/{taskId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      summary: Delete user task (Admin only)
+      responses:
+        "204":
+          description: Task deleted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/tasks/{taskId}/restore:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Restore user task (Admin only)
+      responses:
+        "200":
+          description: Task restored
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_task_id:
+                  value: {error: "invalid task id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/projects/{projectId}/tasks:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: List user project tasks (Admin only)
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_project_id:
+                  value: {error: "invalid project id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/tags:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      summary: List user tags (Admin only)
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{userId}/tags/{tagId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: tagId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      summary: Delete user tag (Admin only)
+      responses:
+        "204":
+          description: Tag deleted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_user_id:
+                  value: {error: "invalid user id"}
+                invalid_tag_id:
+                  value: {error: "invalid tag id"}
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Tag not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "tag not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
