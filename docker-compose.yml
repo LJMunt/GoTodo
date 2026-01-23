@@ -2,10 +2,10 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "8081:8081"
     environment:
       - DATABASE_URL=postgres://gotodo:gotodo@db:5432/gotodo?sslmode=disable
-      - PORT=8080
+      - PORT=8081
       - JWT_SECRET=your_jwt_secret_here
     depends_on:
       db:

@@ -26,6 +26,6 @@ COPY internal/db/migrations ./internal/db/migrations
 ENV PORT=8080
 ENV MIGRATIONS_PATH=/app/internal/db/migrations
 
-EXPOSE 8080
+EXPOSE 8081
 
 CMD ["./gotodo"]
