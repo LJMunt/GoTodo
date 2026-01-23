@@ -91,3 +91,28 @@ jobs:
         with:
           name: server-log
           path: server.log
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log into GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags:
+          -  ghcr.io/${{ github.repository }}:latest
+          - ghcr.io/${{ github.repository }}:${{ github.ref_name }}
