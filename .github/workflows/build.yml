@@ -108,9 +108,6 @@ jobs:
         run: |
           python3 -V
 
-          # If your smoke test uses requests, install it.
-          # If it uses only stdlib, this is harmless.
-
           python3 api_smoke_test.py \
             --base-url "$BASE_URL" \
             --admin-email "$ADMIN_EMAIL" \
