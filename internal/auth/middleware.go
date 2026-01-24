@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -18,10 +19,28 @@ type User struct {
 	IsAdmin bool
 }
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
 func FromContext(ctx context.Context) (User, bool) {
 	v := ctx.Value(userKey)
 	u, ok := v.(User)
 	return u, ok
+}
+
+func WithUser(ctx context.Context, user User) context.Context {
+	return context.WithValue(ctx, userKey, user)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
 }
 
 func bearerToken(r *http.Request) (string, bool) {
@@ -39,13 +58,13 @@ func RequireAuth(db *pgxpool.Pool) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tok, ok := bearerToken(r)
 			if !ok {
-				http.Error(w, "missing token", http.StatusUnauthorized)
+				writeErr(w, http.StatusUnauthorized, "missing token")
 				return
 			}
 
 			claims, err := ParseToken(tok)
 			if err != nil {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
@@ -60,7 +79,7 @@ func RequireAuth(db *pgxpool.Pool) func(http.Handler) http.Handler {
 			).Scan(&isAdmin, &isActive)
 
 			if err != nil || !isActive {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
@@ -74,7 +93,7 @@ func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := FromContext(r.Context())
 		if !ok || !u.IsAdmin {
-			http.Error(w, "forbidden: admin access required", http.StatusForbidden)
+			writeErr(w, http.StatusForbidden, "forbidden: admin access required")
 			return
 		}
 		next.ServeHTTP(w, r)

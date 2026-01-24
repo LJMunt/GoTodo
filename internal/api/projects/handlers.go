@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,11 +24,33 @@ type ProjectResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
+type projectQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type projectUpdater interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
 func parseID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 }
 
-func CreateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
 	type request struct {
 		Name        string  `json:"name"`
 		Description *string `json:"description"`
@@ -36,18 +59,18 @@ func CreateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "name is required")
 			return
 		}
 
@@ -65,15 +88,14 @@ func CreateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if err != nil {
 			// Specific error for unique constraint violation
 			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "23505") {
-				http.Error(w, "project with this name already exists", http.StatusConflict)
+				writeErr(w, http.StatusConflict, "project with this name already exists")
 				return
 			}
-			http.Error(w, "failed to create project", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to create project")
 			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(p)
+		writeJSON(w, http.StatusCreated, p)
 	}
 }
 
@@ -81,7 +103,7 @@ func ListProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -89,36 +111,36 @@ func ListProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id`, user.ID)
 		if err != nil {
-			http.Error(w, "failed to list projects", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to list projects")
 			return
 		}
 		defer rows.Close()
 
-		var projects []ProjectResponse
+		projects := make([]ProjectResponse, 0, 16)
 		for rows.Next() {
 			var p ProjectResponse
 			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
-				http.Error(w, "failed to scan project", http.StatusInternalServerError)
+				writeErr(w, http.StatusInternalServerError, "failed to scan project")
 				return
 			}
 			projects = append(projects, p)
 		}
-		_ = json.NewEncoder(w).Encode(projects)
+		writeJSON(w, http.StatusOK, projects)
 	}
 
 }
 
-func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetProjectHandler(db projectQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		id, err := parseID(r)
 		if err != nil {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
@@ -134,19 +156,19 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
 		if err != nil {
-			http.Error(w, "failed to fetch project", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to fetch project")
 			return
 		}
 
-		_ = json.NewEncoder(w).Encode(p)
+		writeJSON(w, http.StatusOK, p)
 	}
 }
 
-func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 	type request struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -155,19 +177,19 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		id, err := parseID(r)
 		if err != nil {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
@@ -184,11 +206,11 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		)
 
 		if err != nil {
-			http.Error(w, "failed to update project", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to update project")
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
 
@@ -200,13 +222,13 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		id, err := parseID(r) // your existing helper
 		if err != nil || id <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
@@ -215,7 +237,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
-			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
 			return
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
@@ -228,11 +250,11 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			id, user.ID,
 		)
 		if err != nil {
-			http.Error(w, "failed to delete project", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to delete project")
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
 
@@ -244,12 +266,12 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			id, user.ID,
 		)
 		if err != nil {
-			http.Error(w, "failed to delete project tasks", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to delete project tasks")
 			return
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			http.Error(w, "failed to commit project delete", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to commit project delete")
 			return
 		}
 

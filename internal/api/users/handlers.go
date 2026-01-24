@@ -3,19 +3,38 @@ package users
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	authmw "GoToDo/internal/auth"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 )
 
-func MeHandler(db *pgxpool.Pool) http.HandlerFunc {
+type apiError struct {
+	Error string `json:"error"`
+}
+
+type userDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
+func MeHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := authmw.FromContext(r.Context())
 		if !ok {
-			http.Error(w, "not authenticated", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "not authenticated")
 			return
 		}
 
@@ -30,12 +49,15 @@ func MeHandler(db *pgxpool.Pool) http.HandlerFunc {
 			u.ID,
 		).Scan(&email, &isAdmin, &isActive)
 		if err != nil {
-			http.Error(w, "user not found", http.StatusNotFound)
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, "user not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "failed to fetch user")
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"id":        u.ID,
 			"email":     email,
 			"is_admin":  isAdmin,

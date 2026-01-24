@@ -10,8 +10,8 @@ import (
 
 	authmw "GoToDo/internal/auth"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,6 +30,14 @@ type userCreatedResponse struct {
 	Token string `json:"token"`
 }
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
+type authDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 const minPasswordLen = 8
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -38,27 +46,31 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func SignupHandler(db *pgxpool.Pool) http.HandlerFunc {
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
+func SignupHandler(db authDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req credentials
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		email := strings.TrimSpace(strings.ToLower(req.Email))
 		if email == "" {
-			http.Error(w, "email is required", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "email is required")
 			return
 		}
 		if len(req.Password) < minPasswordLen {
-			http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
 			return
 		}
 
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "failed to hash password", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to hash password")
 			return
 		}
 
@@ -75,16 +87,16 @@ func SignupHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-				http.Error(w, "email already exists", http.StatusConflict)
+				writeErr(w, http.StatusConflict, "email already exists")
 				return
 			}
-			http.Error(w, "failed to create user", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
 
 		token, err := authmw.SignToken(id) // ✅ only userID in JWT now
 		if err != nil {
-			http.Error(w, "failed to sign token", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
 		}
 
@@ -96,17 +108,17 @@ func SignupHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func LoginHandler(db *pgxpool.Pool) http.HandlerFunc {
+func LoginHandler(db authDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req credentials
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		email := strings.TrimSpace(strings.ToLower(req.Email))
 		if email == "" || req.Password == "" {
-			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
@@ -128,18 +140,18 @@ func LoginHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
-			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
-			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		token, err := authmw.SignToken(id) // ✅ only userID in JWT now
 		if err != nil {
-			http.Error(w, "failed to sign token", http.StatusInternalServerError)
+			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
 		}
 

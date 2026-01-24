@@ -9,28 +9,40 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
 func HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	}
 }
 
 func ReadyHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
-			http.Error(w, "db connection not initialized", http.StatusServiceUnavailable)
+			writeErr(w, http.StatusServiceUnavailable, "db connection not initialized")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 
 		if err := db.Ping(ctx); err != nil {
-			http.Error(w, "db not ready", http.StatusServiceUnavailable)
+			writeErr(w, http.StatusServiceUnavailable, "db not ready")
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ready": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ready": true})
 	}
 }
