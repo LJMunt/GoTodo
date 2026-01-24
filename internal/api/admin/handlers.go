@@ -54,6 +54,20 @@ type TagResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, msg string, status int) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
 func parseInt64Param(r *http.Request, key string) (int64, error) {
 	s := chi.URLParam(r, key)
 	return strconv.ParseInt(s, 10, 64)
@@ -71,7 +85,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if limitStr != "" {
 			l, err := strconv.Atoi(limitStr)
 			if err != nil || l <= 0 {
-				http.Error(w, "invalid limit", http.StatusBadRequest)
+				writeErr(w, "invalid limit", http.StatusBadRequest)
 				return
 			}
 			if l > 200 {
@@ -84,7 +98,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if offsetStr != "" {
 			o, err := strconv.Atoi(offsetStr)
 			if err != nil || o < 0 {
-				http.Error(w, "invalid offset", http.StatusBadRequest)
+				writeErr(w, "invalid offset", http.StatusBadRequest)
 				return
 			}
 			offset = o
@@ -94,7 +108,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if activeStr != "" {
 			a, err := strconv.ParseBool(activeStr)
 			if err != nil {
-				http.Error(w, "invalid active (use true/false)", http.StatusBadRequest)
+				writeErr(w, "invalid active (use true/false)", http.StatusBadRequest)
 				return
 			}
 			activeFilter = &a
@@ -132,7 +146,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, query, args...)
 		if err != nil {
-			http.Error(w, "failed to list users", http.StatusInternalServerError)
+			writeErr(w, "failed to list users", http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
@@ -141,13 +155,13 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var u UserResponse
 			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
-				http.Error(w, "failed to scan user", http.StatusInternalServerError)
+				writeErr(w, "failed to scan user", http.StatusInternalServerError)
 				return
 			}
 			users = append(users, u)
 		}
 		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read users", http.StatusInternalServerError)
+			writeErr(w, "failed to read users", http.StatusInternalServerError)
 			return
 		}
 
@@ -168,8 +182,12 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 			idStr,
 		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
 
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
 		if err != nil {
-			http.Error(w, "user not found", http.StatusNotFound)
+			writeErr(w, "failed to fetch user", http.StatusInternalServerError)
 			return
 		}
 
@@ -189,7 +207,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		var req updateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 
@@ -199,7 +217,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if req.IsAdmin != nil {
 			_, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, idStr)
 			if err != nil {
-				http.Error(w, "failed to update is_admin", http.StatusInternalServerError)
+				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -207,24 +225,24 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if req.IsActive != nil {
 			_, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, idStr)
 			if err != nil {
-				http.Error(w, "failed to update is_active", http.StatusInternalServerError)
+				writeErr(w, "failed to update is_active", http.StatusInternalServerError)
 				return
 			}
 		}
 
 		if req.Password != nil {
 			if len(*req.Password) < 8 {
-				http.Error(w, "password too short", http.StatusBadRequest)
+				writeErr(w, "password too short", http.StatusBadRequest)
 				return
 			}
 			hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
 			if err != nil {
-				http.Error(w, "failed to hash password", http.StatusInternalServerError)
+				writeErr(w, "failed to hash password", http.StatusInternalServerError)
 				return
 			}
 			_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), idStr)
 			if err != nil {
-				http.Error(w, "failed to update password", http.StatusInternalServerError)
+				writeErr(w, "failed to update password", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -241,12 +259,12 @@ func DeleteUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		tag, err := db.Exec(ctx, "UPDATE users SET is_active=false, updated_at=now() WHERE id=$1;", idStr)
 		if err != nil {
-			http.Error(w, "failed to delete user", http.StatusInternalServerError)
+			writeErr(w, "failed to delete user", http.StatusInternalServerError)
 			return
 		}
 
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "user not found", http.StatusNotFound)
+			writeErr(w, "user not found", http.StatusNotFound)
 			return
 		}
 
@@ -258,7 +276,7 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 
@@ -277,7 +295,7 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, query, userID)
 		if err != nil {
-			http.Error(w, "failed to list projects", http.StatusInternalServerError)
+			writeErr(w, "failed to list projects", http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
@@ -286,13 +304,13 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var p ProjectResponse
 			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
-				http.Error(w, "failed to scan project", http.StatusInternalServerError)
+				writeErr(w, "failed to scan project", http.StatusInternalServerError)
 				return
 			}
 			projects = append(projects, p)
 		}
 		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read projects", http.StatusInternalServerError)
+			writeErr(w, "failed to read projects", http.StatusInternalServerError)
 			return
 		}
 
@@ -305,12 +323,12 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
 
@@ -330,11 +348,11 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		err = db.QueryRow(ctx, query, projectID, userID).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, "project not found", http.StatusNotFound)
 			return
 		}
 		if err != nil {
-			http.Error(w, "failed to fetch project", http.StatusInternalServerError)
+			writeErr(w, "failed to fetch project", http.StatusInternalServerError)
 			return
 		}
 
@@ -352,23 +370,23 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			writeErr(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 
 		if req.Name != nil && *req.Name == "" {
-			http.Error(w, "name cannot be empty", http.StatusBadRequest)
+			writeErr(w, "name cannot be empty", http.StatusBadRequest)
 			return
 		}
 
@@ -384,11 +402,11 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			req.Name, req.Description, projectID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to update project", http.StatusInternalServerError)
+			writeErr(w, "failed to update project", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, "project not found", http.StatusNotFound)
 			return
 		}
 
@@ -400,12 +418,12 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
 
@@ -414,7 +432,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
-			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
@@ -426,11 +444,11 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			projectID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to delete project", http.StatusInternalServerError)
+			writeErr(w, "failed to delete project", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, "project not found", http.StatusNotFound)
 			return
 		}
 
@@ -441,12 +459,12 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			projectID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to delete project tasks", http.StatusInternalServerError)
+			writeErr(w, "failed to delete project tasks", http.StatusInternalServerError)
 			return
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			http.Error(w, "failed to commit project delete", http.StatusInternalServerError)
+			writeErr(w, "failed to commit project delete", http.StatusInternalServerError)
 			return
 		}
 
@@ -462,12 +480,12 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
 
@@ -476,7 +494,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		var req request
 		if r.Body != nil && r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "invalid request body", http.StatusBadRequest)
+				writeErr(w, "invalid request body", http.StatusBadRequest)
 				return
 			}
 			if req.RestoreTasks != nil {
@@ -489,7 +507,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
-			http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
@@ -501,11 +519,11 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			projectID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to restore project", http.StatusInternalServerError)
+			writeErr(w, "failed to restore project", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "project not found or not deleted", http.StatusNotFound)
+			writeErr(w, "project not found or not deleted", http.StatusNotFound)
 			return
 		}
 
@@ -517,13 +535,13 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 				projectID, userID,
 			)
 			if err != nil {
-				http.Error(w, "failed to restore project tasks", http.StatusInternalServerError)
+				writeErr(w, "failed to restore project tasks", http.StatusInternalServerError)
 				return
 			}
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			http.Error(w, "failed to commit restore", http.StatusInternalServerError)
+			writeErr(w, "failed to commit restore", http.StatusInternalServerError)
 			return
 		}
 
@@ -535,12 +553,12 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		taskID, err := parseInt64Param(r, "taskId")
 		if err != nil || taskID <= 0 {
-			http.Error(w, "invalid task id", http.StatusBadRequest)
+			writeErr(w, "invalid task id", http.StatusBadRequest)
 			return
 		}
 
@@ -558,16 +576,16 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		).Scan(&projectDeleted)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "task not found", http.StatusNotFound)
+			writeErr(w, "task not found", http.StatusNotFound)
 			return
 		}
 		if err != nil {
-			http.Error(w, "failed to verify task", http.StatusInternalServerError)
+			writeErr(w, "failed to verify task", http.StatusInternalServerError)
 			return
 		}
 
 		if projectDeleted {
-			http.Error(w, "cannot restore task while its project is deleted (restore project first)", http.StatusConflict)
+			writeErr(w, "cannot restore task while its project is deleted (restore project first)", http.StatusConflict)
 			return
 		}
 
@@ -578,11 +596,11 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			taskID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to restore task", http.StatusInternalServerError)
+			writeErr(w, "failed to restore task", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "task not found or not deleted", http.StatusNotFound)
+			writeErr(w, "task not found or not deleted", http.StatusNotFound)
 			return
 		}
 
@@ -594,7 +612,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 
@@ -623,7 +641,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, query, userID)
 		if err != nil {
-			http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+			writeErr(w, "failed to list tasks", http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
@@ -637,13 +655,13 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
 			); err != nil {
-				http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 				return
 			}
 			out = append(out, t)
 		}
 		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+			writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 			return
 		}
 
@@ -656,12 +674,12 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			http.Error(w, "invalid project id", http.StatusBadRequest)
+			writeErr(w, "invalid project id", http.StatusBadRequest)
 			return
 		}
 
@@ -679,11 +697,11 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 )`,
 			projectID, userID, includeDeleted,
 		).Scan(&projectOK); err != nil {
-			http.Error(w, "failed to verify project", http.StatusInternalServerError)
+			writeErr(w, "failed to verify project", http.StatusInternalServerError)
 			return
 		}
 		if !projectOK {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeErr(w, "project not found", http.StatusNotFound)
 			return
 		}
 
@@ -703,7 +721,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, query, userID, projectID)
 		if err != nil {
-			http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+			writeErr(w, "failed to list tasks", http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
@@ -717,13 +735,13 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
 			); err != nil {
-				http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 				return
 			}
 			out = append(out, t)
 		}
 		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read tasks", http.StatusInternalServerError)
+			writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 			return
 		}
 
@@ -736,12 +754,12 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		taskID, err := parseInt64Param(r, "taskId")
 		if err != nil || taskID <= 0 {
-			http.Error(w, "invalid task id", http.StatusBadRequest)
+			writeErr(w, "invalid task id", http.StatusBadRequest)
 			return
 		}
 
@@ -755,11 +773,11 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			taskID, userID,
 		)
 		if err != nil {
-			http.Error(w, "failed to delete task", http.StatusInternalServerError)
+			writeErr(w, "failed to delete task", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "task not found", http.StatusNotFound)
+			writeErr(w, "task not found", http.StatusNotFound)
 			return
 		}
 
@@ -771,7 +789,7 @@ func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -792,7 +810,7 @@ func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx, query, args...)
 		if err != nil {
-			http.Error(w, "failed to list tags", http.StatusInternalServerError)
+			writeErr(w, "failed to list tags", http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
@@ -801,13 +819,13 @@ func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TagResponse
 			if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.UpdatedAt); err != nil {
-				http.Error(w, "failed to read tags", http.StatusInternalServerError)
+				writeErr(w, "failed to read tags", http.StatusInternalServerError)
 				return
 			}
 			out = append(out, t)
 		}
 		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read tags", http.StatusInternalServerError)
+			writeErr(w, "failed to read tags", http.StatusInternalServerError)
 			return
 		}
 
@@ -820,12 +838,12 @@ func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
-			http.Error(w, "invalid user id", http.StatusBadRequest)
+			writeErr(w, "invalid user id", http.StatusBadRequest)
 			return
 		}
 		tagID, err := parseInt64Param(r, "tagId")
 		if err != nil || tagID <= 0 {
-			http.Error(w, "invalid tag id", http.StatusBadRequest)
+			writeErr(w, "invalid tag id", http.StatusBadRequest)
 			return
 		}
 
@@ -835,11 +853,11 @@ func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		query := `DELETE FROM tags WHERE id = $1 AND user_id = $2`
 		tag, err := db.Exec(ctx, query, tagID, userID)
 		if err != nil {
-			http.Error(w, "failed to delete tag", http.StatusInternalServerError)
+			writeErr(w, "failed to delete tag", http.StatusInternalServerError)
 			return
 		}
 		if tag.RowsAffected() == 0 {
-			http.Error(w, "tag not found", http.StatusNotFound)
+			writeErr(w, "tag not found", http.StatusNotFound)
 			return
 		}
 
