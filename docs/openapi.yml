@@ -107,15 +107,17 @@ components:
         id:
           type: integer
           format: int64
-        user_id:
-          type: integer
-          format: int64
         name:
+          type: string
+        color:
           type: string
         created_at:
           type: string
           format: date-time
-      required: [id, user_id, name, created_at]
+        updated_at:
+          type: string
+          format: date-time
+      required: [ id, name, color, created_at, updated_at ]
 
     Occurrence:
       type: object
@@ -1007,10 +1009,16 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 name:
                   type: string
-              required: [name]
+                color:
+                  type: string
+                  description: Tag color token (from a constrained palette, e.g. "slate", "orange", "sky").
+              anyOf:
+                - required: [name]
+                - required: [color]
       responses:
         "200":
           description: Tag renamed
