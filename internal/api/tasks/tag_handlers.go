@@ -13,8 +13,9 @@ import (
 )
 
 type TaskTagResponse struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 func parseTaskID(r *http.Request) (int64, error) {
@@ -68,7 +69,7 @@ func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx,
-			`SELECT tg.id, tg.name
+			`SELECT tg.id, tg.name, tg.color
 									 FROM task_tags tt
 									 JOIN tags tg ON tg.id = tt.tag_id
 									 WHERE tt.user_id = $1 AND tt.task_id = $2
@@ -84,7 +85,7 @@ func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		out := make([]TaskTagResponse, 0, 16)
 		for rows.Next() {
 			var t TaskTagResponse
-			if err := rows.Scan(&t.ID, &t.Name); err != nil {
+			if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read task tags")
 				return
 			}
@@ -203,7 +204,7 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := tx.Query(ctx,
-			`SELECT tg.id, tg.name
+			`SELECT tg.id, tg.name, tg.color
 									 FROM task_tags tt
 									 JOIN tags tg ON tg.id = tt.tag_id
 									 WHERE tt.user_id = $1 AND tt.task_id = $2
@@ -219,7 +220,7 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		out := make([]TaskTagResponse, 0, 16)
 		for rows.Next() {
 			var t TaskTagResponse
-			if err := rows.Scan(&t.ID, &t.Name); err != nil {
+			if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read task tags")
 				return
 			}

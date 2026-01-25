@@ -111,6 +111,24 @@ components:
           type: string
         color:
           type: string
+          enum:
+            - slate
+            - gray
+            - red
+            - orange
+            - amber
+            - yellow
+            - lime
+            - green
+            - emerald
+            - teal
+            - cyan
+            - sky
+            - blue
+            - indigo
+            - violet
+            - purple
+            - pink
         created_at:
           type: string
           format: date-time
@@ -960,6 +978,27 @@ paths:
               properties:
                 name:
                   type: string
+                color:
+                  type: string
+                  enum:
+                    - slate
+                    - gray
+                    - red
+                    - orange
+                    - amber
+                    - yellow
+                    - lime
+                    - green
+                    - emerald
+                    - teal
+                    - cyan
+                    - sky
+                    - blue
+                    - indigo
+                    - violet
+                    - purple
+                    - pink
+                  default: slate
               required:
                 - name
       responses:
@@ -1015,7 +1054,25 @@ paths:
                   type: string
                 color:
                   type: string
-                  description: Tag color token (from a constrained palette, e.g. "slate", "orange", "sky").
+                  enum:
+                    - slate
+                    - gray
+                    - red
+                    - orange
+                    - amber
+                    - yellow
+                    - lime
+                    - green
+                    - emerald
+                    - teal
+                    - cyan
+                    - sky
+                    - blue
+                    - indigo
+                    - violet
+                    - purple
+                    - pink
+                  description: Tag color token.
               anyOf:
                 - required: [name]
                 - required: [color]
