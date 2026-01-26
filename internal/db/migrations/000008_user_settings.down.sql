@@ -1,0 +1,7 @@
+ALTER TABLE users
+DROP CONSTRAINT IF EXISTS ui_theme_check;
+
+ALTER TABLE users
+DROP COLUMN IF EXISTS ui_theme,
+DROP COLUMN IF EXISTS show_completed_default,
+DROP COLUMN IF EXISTS last_login;

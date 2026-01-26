@@ -40,7 +40,9 @@ components:
           type: boolean
         is_active:
           type: boolean
-      required: [id, email, is_admin, is_active]
+        last_login:
+          type: string
+      required: [id, email, is_admin, is_active, last_login]
 
     Project:
       type: object
