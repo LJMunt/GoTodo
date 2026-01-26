@@ -41,6 +41,8 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
 
+			r.Post("/auth/password-change", auth.PasswordChangeHandler(deps.DB))
+
 			r.Route("/users", func(r chi.Router) {
 				users.Routes(r, deps)
 			})
