@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	authmw "GoToDo/internal/auth"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type fakeRow struct {
@@ -28,6 +30,10 @@ func (db fakeUserDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.
 	return db.queryRowFn(ctx, sql, args...)
 }
 
+func (db fakeUserDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
 func TestMeHandler_Success(t *testing.T) {
 	db := fakeUserDB{
 		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
@@ -36,6 +42,9 @@ func TestMeHandler_Success(t *testing.T) {
 					*dest[0].(*string) = "user@example.com"
 					*dest[1].(*bool) = true
 					*dest[2].(*bool) = true
+					*dest[3].(**time.Time) = nil
+					*dest[4].(*string) = "system"
+					*dest[5].(*bool) = false
 					return nil
 				},
 			}

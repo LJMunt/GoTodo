@@ -9,4 +9,5 @@ import (
 func Routes(r chi.Router, deps app.Deps) {
 	r.Post("/signup", SignupHandler(deps.DB))
 	r.Post("/login", LoginHandler(deps.DB))
+	r.Post("/password-change", PasswordChangeHandler(deps.DB))
 }

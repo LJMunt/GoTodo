@@ -36,6 +36,7 @@ type apiError struct {
 
 type authDB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 const minPasswordLen = 8
@@ -149,6 +150,9 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
+		// Update last_login
+		_, _ = db.Exec(ctx, "UPDATE users SET last_login = now() WHERE id = $1", id)
+
 		token, err := authmw.SignToken(id) // ✅ only userID in JWT now
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
@@ -156,5 +160,60 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, authResponse{Token: token})
+	}
+}
+
+func PasswordChangeHandler(db authDB) http.HandlerFunc {
+	type passwordChangeRequest struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, ok := authmw.FromContext(r.Context())
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+
+		var req passwordChangeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		if len(req.NewPassword) < minPasswordLen {
+			writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var passwordHash string
+		err := db.QueryRow(ctx, "SELECT password_hash FROM users WHERE id = $1", u.ID).Scan(&passwordHash)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch user")
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.CurrentPassword)); err != nil {
+			writeErr(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+
+		newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to hash new password")
+			return
+		}
+
+		_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(newHash), u.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to update password")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

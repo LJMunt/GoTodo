@@ -29,6 +29,10 @@ func (db fakeAuthDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.
 	return db.queryRowFn(ctx, sql, args...)
 }
 
+func (db fakeAuthDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
 func TestSignupHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
 

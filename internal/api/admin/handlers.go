@@ -24,12 +24,13 @@ type ProjectResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 type UserResponse struct {
-	ID        int64     `json:"id"`
-	Email     string    `json:"email"`
-	IsAdmin   bool      `json:"is_admin"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64      `json:"id"`
+	Email     string     `json:"email"`
+	IsAdmin   bool       `json:"is_admin"`
+	IsActive  bool       `json:"is_active"`
+	LastLogin *time.Time `json:"last_login"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type TaskResponse struct {
@@ -114,7 +115,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 			activeFilter = &a
 		}
 
-		baseQuery := `SELECT id, email, is_admin, is_active, created_at, updated_at FROM users`
+		baseQuery := `SELECT id, email, is_admin, is_active, last_login, created_at, updated_at FROM users`
 		where := make([]string, 0, 2)
 		args := make([]any, 0, 4)
 
@@ -154,7 +155,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		users := make([]UserResponse, 0, limit)
 		for rows.Next() {
 			var u UserResponse
-			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt); err != nil {
 				writeErr(w, "failed to scan user", http.StatusInternalServerError)
 				return
 			}
@@ -178,9 +179,9 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var u UserResponse
 		err := db.QueryRow(ctx,
-			`SELECT id, email, is_admin, is_active, created_at, updated_at FROM users WHERE id = $1`,
+			`SELECT id, email, is_admin, is_active, last_login, created_at, updated_at FROM users WHERE id = $1`,
 			idStr,
-		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &u.UpdatedAt)
+		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, "user not found", http.StatusNotFound)
