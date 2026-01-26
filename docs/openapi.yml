@@ -342,6 +342,50 @@ paths:
                 error: "invalid credentials"
         "500":
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/auth/change-password:
+    post:
+      summary: Change password
+      description: Changes the authenticated user's password. Requires the current password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                currentPassword:
+                  type: string
+                  format: password
+                newPassword:
+                  type: string
+                  format: password
+                  minLength: 8
+              required: [ currentPassword, newPassword ]
+      responses:
+        "204":
+          description: Password changed
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_body:
+                  value: { error: "invalid request body" }
+                password_too_short:
+                  value: { error: "password must be at least 8 characters" }
+        "401":
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "invalid credentials"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/users/me:
     get:
@@ -365,6 +409,88 @@ paths:
                 error: "user not found"
         "500":
           $ref: '#/components/responses/InternalServerError'
+    patch:
+      summary: Update my user profile
+      description: Partially updates the authenticated user's profile and/or settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                  format: email
+                settings:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    theme:
+                      type: string
+                      description: UI theme preference.
+                      enum: [ system, light, dark ]
+                    showCompletedDefault:
+                      type: boolean
+                      description: Default for showing completed tasks in views.
+              anyOf:
+                - required: [ email ]
+                - required: [ settings ]
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMe"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    delete:
+      summary: Delete my account
+      description: Deletes the authenticated user's account and all associated data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                currentPassword:
+                  type: string
+              required: [ currentPassword ]
+      responses:
+        "204":
+          description: Account deleted
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Admin accounts cannot delete themselves
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/projects:
     get:
