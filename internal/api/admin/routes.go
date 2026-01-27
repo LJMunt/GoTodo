@@ -7,6 +7,7 @@ import (
 )
 
 func Routes(r chi.Router, deps app.Deps) {
+	r.Get("/metrics", GetDatabaseMetricsHandler(deps.DB))
 	r.Route("/users", func(r chi.Router) {
 		r.Get("/", ListUsersHandler(deps.DB))
 		r.Get("/{id}", GetUserHandler(deps.DB))

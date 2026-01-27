@@ -55,6 +55,15 @@ type TagResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type DatabaseMetricsResponse struct {
+	DatabaseSize  string  `json:"database_size"`
+	Connections   int     `json:"connections"`
+	Deadlocks     int     `json:"deadlocks"`
+	BlocksRead    int64   `json:"blocks_read"`
+	BlocksHit     int64   `json:"blocks_hit"`
+	CacheHitRatio float64 `json:"cache_hit_ratio"`
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -864,4 +873,73 @@ func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+type adminDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func GetDatabaseMetricsHandler(db adminDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var sizeBytes int64
+		err := db.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&sizeBytes)
+		if err != nil {
+			writeErr(w, "failed to get database size", http.StatusInternalServerError)
+			return
+		}
+
+		var numbackends int
+		var deadlocks int64
+		var blksRead int64
+		var blksHit int64
+		err = db.QueryRow(ctx, `
+			SELECT
+			  numbackends,
+			  deadlocks,
+			  blks_read,
+			  blks_hit
+			FROM pg_stat_database
+			WHERE datname = current_database();
+		`).Scan(&numbackends, &deadlocks, &blksRead, &blksHit)
+		if err != nil {
+			writeErr(w, "failed to get database stats", http.StatusInternalServerError)
+			return
+		}
+
+		var cacheHitRatio float64
+		if blksRead+blksHit > 0 {
+			cacheHitRatio = float64(blksHit) / float64(blksRead+blksHit) * 100
+		}
+
+		resp := DatabaseMetricsResponse{
+			DatabaseSize:  formatBytes(sizeBytes),
+			Connections:   numbackends,
+			Deadlocks:     int(deadlocks),
+			BlocksRead:    blksRead,
+			BlocksHit:     blksHit,
+			CacheHitRatio: cacheHitRatio,
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	if b < unit*unit {
+		return fmt.Sprintf("%.2f KB", float64(b)/float64(unit))
+	}
+	if b < unit*unit*unit {
+		return fmt.Sprintf("%.2f MB", float64(b)/float64(unit*unit))
+	}
+	if b < unit*unit*unit*unit {
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(unit*unit*unit))
+	}
+	return fmt.Sprintf("%.2f TB", float64(b)/float64(unit*unit*unit*unit))
 }

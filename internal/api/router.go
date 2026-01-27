@@ -38,6 +38,13 @@ func NewRouter(deps app.Deps) chi.Router {
 			auth.Routes(r, deps)
 		})
 
+		// Admin routes
+		r.Route("/admin", func(r chi.Router) {
+			r.Use(authmw.RequireAuth(deps.DB))
+			r.Use(authmw.RequireAdmin)
+			admin.Routes(r, deps)
+		})
+
 		// Everything in here requires a valid user token
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
@@ -48,10 +55,6 @@ func NewRouter(deps app.Deps) chi.Router {
 				users.Routes(r, deps)
 			})
 
-			r.Route("/admin", func(r chi.Router) {
-				r.Use(authmw.RequireAdmin) // only extra requirement
-				admin.Routes(r, deps)
-			})
 			r.Route("/projects", func(r chi.Router) {
 				projects.Routes(r, deps)
 			})
