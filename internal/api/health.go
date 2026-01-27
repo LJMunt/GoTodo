@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const Version = "0.5.0"
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -26,6 +28,12 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 func HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	}
+}
+
+func VersionHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"version": Version})
 	}
 }
 

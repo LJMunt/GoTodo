@@ -32,6 +32,7 @@ func NewRouter(deps app.Deps) chi.Router {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", HealthHandler())
 		r.Get("/ready", ReadyHandler(deps.DB))
+		r.Get("/version", VersionHandler())
 
 		r.Route("/auth", func(r chi.Router) {
 			auth.Routes(r, deps)
