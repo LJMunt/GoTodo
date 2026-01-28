@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const Version = "0.5.0"
+const Version = "v0.5.1"
 
 type apiError struct {
 	Error string `json:"error"`
