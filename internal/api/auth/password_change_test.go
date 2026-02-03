@@ -16,7 +16,7 @@ import (
 func TestPasswordChangeHandler_NotAuthenticated(t *testing.T) {
 	db := fakeAuthDB{}
 
-	body := `{"currentPassword":"oldpassword","newPassword":"newpassword123"}`
+	body := `{"currentPassword":"OldPassword123!","newPassword":"NewPassword456!"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-change", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
@@ -35,8 +35,8 @@ func TestPasswordChangeHandler_NotAuthenticated(t *testing.T) {
 func TestPasswordChangeHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
 
-	oldPassword := "oldpassword"
-	newPassword := "newpassword123"
+	oldPassword := "OldPassword123!"
+	newPassword := "NewPassword456!"
 	userID := int64(42)
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(oldPassword), bcrypt.DefaultCost)
