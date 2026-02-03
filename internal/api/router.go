@@ -5,6 +5,7 @@ import (
 	"GoToDo/internal/api/projects"
 	"GoToDo/internal/api/tags"
 	"GoToDo/internal/api/tasks"
+	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,18 +16,36 @@ import (
 	"GoToDo/internal/api/users"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+	"github.com/go-chi/httprate"
+	"github.com/unrolled/secure"
 )
 
 func NewRouter(deps app.Deps) chi.Router {
 	r := chi.NewRouter()
 
+	secureMiddleware := secure.New(secure.Options{
+		FrameDeny:          true,
+		ContentTypeNosniff: true,
+		BrowserXssFilter:   true,
+		// In production, you'd want these:
+		// IsDevelopment: false,
+		// STSSeconds: 31536000,
+		// STSIncludeSubdomains: true,
+	})
+
 	// Global middleware
+	r.Use(func(next http.Handler) http.Handler {
+		return secureMiddleware.Handler(next)
+	})
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(middleware.CleanPath)
+
+	// Global rate limit: 100 requests per minute per IP
+	r.Use(httprate.LimitByIP(100, 1*time.Minute))
 
 	// Routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -35,6 +54,8 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Get("/version", VersionHandler())
 
 		r.Route("/auth", func(r chi.Router) {
+			// Brute force protection for auth routes: 10 requests per minute per IP
+			r.Use(httprate.LimitByIP(10, 1*time.Minute))
 			auth.Routes(r, deps)
 		})
 
@@ -49,7 +70,11 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
 
-			r.Post("/auth/password-change", auth.PasswordChangeHandler(deps.DB))
+			r.Route("/auth/password-change", func(r chi.Router) {
+				// Brute force protection for password change: 10 requests per minute per IP
+				r.Use(httprate.LimitByIP(10, 1*time.Minute))
+				r.Post("/", auth.PasswordChangeHandler(deps.DB))
+			})
 
 			r.Route("/users", func(r chi.Router) {
 				users.Routes(r, deps)

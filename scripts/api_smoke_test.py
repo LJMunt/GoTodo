@@ -8,7 +8,7 @@ Run Config for Dev in Goland:
 1. Create test@example.com user via API
 2. Set this user as admin
 3. Use these parameters:
---base-url http://localhost:8081 --admin-email test@example.com --admin-password password123
+--base-url http://localhost:8081 --admin-email test@example.com --admin-password Password123!
 """
 
 from __future__ import annotations
@@ -804,8 +804,8 @@ def main() -> int:
         help="Prefix for generated user email. Default: smoketest (creates smoketest+<uniq>@example.com). "
              "If you pass a full email, it will inject +<uniq> before @.",
     )
-    p.add_argument("--user-password", default="password123", help="Password for created user (default: password123)")
-    p.add_argument("--user-new-password", default="newpassword123", help="New password set by admin (default: newpassword123)")
+    p.add_argument("--user-password", default="Password123!", help="Password for created user (default: Password123!)")
+    p.add_argument("--user-new-password", default="NewPassword123!", help="New password set by admin (default: NewPassword123!)")
     p.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds (default: 10)")
     p.add_argument("--verbose", action="store_true", help="Print response JSON for some steps")
     args = p.parse_args()

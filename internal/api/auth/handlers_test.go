@@ -47,7 +47,7 @@ func TestSignupHandler_Success(t *testing.T) {
 		},
 	}
 
-	body := `{"email":" Test@Email.com ","password":"password123"}`
+	body := `{"email":" Test@Email.com ","password":"Password123!"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
@@ -83,7 +83,7 @@ func TestSignupHandler_DuplicateEmail(t *testing.T) {
 		},
 	}
 
-	body := `{"email":"test@example.com","password":"password123"}`
+	body := `{"email":"test@example.com","password":"Password123!"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
@@ -105,7 +105,7 @@ func TestSignupHandler_DuplicateEmail(t *testing.T) {
 func TestLoginHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
 
-	hash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestLoginHandler_Success(t *testing.T) {
 		},
 	}
 
-	body := `{"email":"user@example.com","password":"password123"}`
+	body := `{"email":"user@example.com","password":"Password123!"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
@@ -153,7 +153,7 @@ func TestLoginHandler_InvalidCredentials(t *testing.T) {
 		},
 	}
 
-	body := `{"email":"user@example.com","password":"password123"}`
+	body := `{"email":"user@example.com","password":"Password123!"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 

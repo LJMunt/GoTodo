@@ -41,6 +41,38 @@ type authDB interface {
 
 const minPasswordLen = 8
 
+func validatePassword(password string) error {
+	if len(password) < minPasswordLen {
+		return errors.New("password must be at least 8 characters")
+	}
+
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasNumber  bool
+		hasSpecial bool
+	)
+
+	for _, char := range password {
+		switch {
+		case 'a' <= char && char <= 'z':
+			hasLower = true
+		case 'A' <= char && char <= 'Z':
+			hasUpper = true
+		case '0' <= char && char <= '9':
+			hasNumber = true
+		case strings.ContainsRune("!@#$%^&*()-_=+[]{}|;:,.<>/?", char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper || !hasLower || !hasNumber || !hasSpecial {
+		return errors.New("password must contain uppercase, lowercase, number and special character")
+	}
+
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -64,8 +96,8 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "email is required")
 			return
 		}
-		if len(req.Password) < minPasswordLen {
-			writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		if err := validatePassword(req.Password); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -182,8 +214,8 @@ func PasswordChangeHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		if len(req.NewPassword) < minPasswordLen {
-			writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+		if err := validatePassword(req.NewPassword); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
