@@ -13,9 +13,11 @@ import (
 
 	"GoToDo/internal/api/admin"
 	"GoToDo/internal/api/auth"
+	"GoToDo/internal/api/config"
 	"GoToDo/internal/api/users"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+
 	"github.com/go-chi/httprate"
 	"github.com/unrolled/secure"
 )
@@ -24,13 +26,12 @@ func NewRouter(deps app.Deps) chi.Router {
 	r := chi.NewRouter()
 
 	secureMiddleware := secure.New(secure.Options{
-		FrameDeny:          true,
-		ContentTypeNosniff: true,
-		BrowserXssFilter:   true,
-		// In production, you'd want these:
-		// IsDevelopment: false,
-		// STSSeconds: 31536000,
-		// STSIncludeSubdomains: true,
+		FrameDeny:            true,
+		ContentTypeNosniff:   true,
+		BrowserXssFilter:     true,
+		IsDevelopment:        false,
+		STSSeconds:           31536000,
+		STSIncludeSubdomains: true,
 	})
 
 	// Global middleware
@@ -52,6 +53,9 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Get("/health", HealthHandler())
 		r.Get("/ready", ReadyHandler(deps.DB))
 		r.Get("/version", VersionHandler())
+		r.Route("/config", func(r chi.Router) {
+			config.Routes(r, deps)
+		})
 
 		r.Route("/auth", func(r chi.Router) {
 			// Brute force protection for auth routes: 10 requests per minute per IP
