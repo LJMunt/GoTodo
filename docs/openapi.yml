@@ -229,6 +229,33 @@ components:
           description: Cache hit ratio percentage
       required: [database_size, connections, deadlocks, blocks_read, blocks_hit, cache_hit_ratio]
 
+    ConfigKey:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Configuration key (supports dot notation for nesting)
+        description:
+          type: string
+          description: Description of the configuration key
+        data_type:
+          type: string
+          enum: [string, boolean, number]
+        is_public:
+          type: boolean
+          description: Whether the key is accessible via the public /config endpoint
+      required: [key, data_type, is_public]
+
+    ConfigTranslations:
+      type: object
+      additionalProperties:
+        type: string
+      description: Key-value pairs for translations in a specific language
+
+    AppConfig:
+      type: object
+      description: Nested JSON configuration object (public)
+
   responses:
     Unauthorized:
       description: Unauthorized
@@ -306,6 +333,28 @@ paths:
                 properties:
                   version:
                     type: string
+
+  /api/v1/config:
+    get:
+      tags: [Config]
+      summary: Get public configuration
+      description: Returns public configuration keys as a nested JSON object. Uses lang parameter or Accept-Language header for translation.
+      security: []
+      parameters:
+        - in: query
+          name: lang
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppConfig'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
 
   /api/v1/auth/signup:
     post:
@@ -1377,6 +1426,7 @@ paths:
 
   /api/v1/admin/metrics:
     get:
+      tags: [Admin]
       summary: Get database metrics (Admin only)
       responses:
         "200":
@@ -1385,6 +1435,76 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DatabaseMetrics'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/config/keys:
+    get:
+      tags: [Admin]
+      summary: List configuration keys (Admin only)
+      responses:
+        "200":
+          description: List of configuration keys with metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConfigKey'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/config/translations:
+    get:
+      tags: [Admin]
+      summary: Get translations (Admin only)
+      parameters:
+        - in: query
+          name: lang
+          required: true
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      responses:
+        "200":
+          description: Key-value pairs for the requested language
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigTranslations'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Admin]
+      summary: Bulk upsert translations (Admin only)
+      parameters:
+        - in: query
+          name: lang
+          required: true
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigTranslations'
+      responses:
+        "204":
+          description: Translations updated
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
