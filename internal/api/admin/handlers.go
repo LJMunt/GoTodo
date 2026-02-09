@@ -183,13 +183,19 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
 		var u UserResponse
-		err := db.QueryRow(ctx,
+		err = db.QueryRow(ctx,
 			`SELECT id, email, is_admin, is_active, last_login, created_at, updated_at FROM users WHERE id = $1`,
-			idStr,
+			id,
 		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -215,6 +221,12 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
 		var req updateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeErr(w, "invalid request body", http.StatusBadRequest)
@@ -225,7 +237,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		if req.IsAdmin != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, idStr)
+			_, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
 			if err != nil {
 				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
 				return
@@ -233,7 +245,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if req.IsActive != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, idStr)
+			_, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
 			if err != nil {
 				writeErr(w, "failed to update is_active", http.StatusInternalServerError)
 				return
@@ -242,7 +254,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		if req.Password != nil {
 			if len(*req.Password) < 8 {
-				writeErr(w, "password too short", http.StatusBadRequest)
+				writeErr(w, "password too short (min 8 characters)", http.StatusBadRequest)
 				return
 			}
 			hash, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
@@ -250,7 +262,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, "failed to hash password", http.StatusInternalServerError)
 				return
 			}
-			_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), idStr)
+			_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), id)
 			if err != nil {
 				writeErr(w, "failed to update password", http.StatusInternalServerError)
 				return
@@ -264,10 +276,16 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 func DeleteUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tag, err := db.Exec(ctx, "UPDATE users SET is_active=false, updated_at=now() WHERE id=$1;", idStr)
+		tag, err := db.Exec(ctx, "UPDATE users SET is_active=false, updated_at=now() WHERE id=$1;", id)
 		if err != nil {
 			writeErr(w, "failed to delete user", http.StatusInternalServerError)
 			return
