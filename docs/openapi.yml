@@ -256,6 +256,21 @@ components:
       type: object
       description: Nested JSON configuration object (public)
 
+    ConfigValue:
+      description: JSON value for non-string config keys.
+      oneOf:
+        - type: boolean
+        - type: number
+        - type: object
+        - type: array
+        - type: "null"
+
+    ConfigValues:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/ConfigValue"
+
+
   responses:
     Unauthorized:
       description: Unauthorized
@@ -1511,6 +1526,47 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/config/values:
+    get:
+      tags: [ Admin ]
+      summary: Get backend config values (Admin only)
+      responses:
+        "200":
+          description: Key-value pairs of backend config values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigValues"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    put:
+      tags: [ Admin ]
+      summary: Bulk upsert backend config values (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigValues"
+      responses:
+        "204":
+          description: Values updated
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/admin/users:
     get:
