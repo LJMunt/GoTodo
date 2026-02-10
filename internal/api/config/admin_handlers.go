@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +20,8 @@ type Key struct {
 }
 
 type Translations map[string]string
+
+type ConfigValues map[string]any
 
 // ListConfigKeysHandler returns all configuration keys and metadata.
 func ListConfigKeysHandler(db *pgxpool.Pool) http.HandlerFunc {
@@ -89,6 +93,47 @@ func GetTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// GetConfigValuesHandler returns all backend JSON config values (non-string keys only).
+func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		rows, err := db.Query(ctx, `
+			SELECT key, value_json
+			FROM config_keys
+			WHERE value_json IS NOT NULL
+			ORDER BY key ASC
+		`)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch config values")
+			return
+		}
+		defer rows.Close()
+
+		values := make(map[string]any)
+		for rows.Next() {
+			var key string
+			var raw any
+			if err := rows.Scan(&key, &raw); err != nil {
+				continue
+			}
+			// pgx decodes jsonb into []byte or map depending on settings; marshal/unmarshal for safety
+			b, mErr := json.Marshal(raw)
+			if mErr != nil {
+				continue
+			}
+			var v any
+			if uErr := json.Unmarshal(b, &v); uErr != nil {
+				continue
+			}
+			values[key] = v
+		}
+
+		writeJSON(w, http.StatusOK, values)
+	}
+}
+
 // UpdateTranslationsHandler bulk updates/upserts translations for a language.
 func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +169,101 @@ func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 			`, key, lang, val)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to update translation")
+				return
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to commit transaction")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// UpdateConfigValuesHandler bulk upserts backend JSON config values for non-string keys.
+// Rules:
+// - Reject updates for keys with data_type = 'string' (must go through translations)
+// - Validate JSON type matches data_type for 'boolean' and 'number'
+// - (Optional) Reject if is_public = true to avoid public non-string keys
+func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload ConfigValues
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		validateType := func(dataType string, v any) error {
+			switch dataType {
+			case "boolean":
+				if _, ok := v.(bool); !ok {
+					return errors.New("value must be a boolean for data_type=boolean")
+				}
+			case "number":
+				// JSON numbers decode to float64 in Go by default
+				if _, ok := v.(float64); !ok {
+					return errors.New("value must be a number for data_type=number")
+				}
+			}
+			return nil
+		}
+
+		for key, val := range payload {
+			var dataType string
+			var isPublic bool
+			// Ensure key exists and fetch metadata
+			if err := tx.QueryRow(ctx, `SELECT data_type, is_public FROM config_keys WHERE key = $1`, key).Scan(&dataType, &isPublic); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown config key: %s", key))
+					return
+				}
+				writeErr(w, http.StatusInternalServerError, "failed to validate key")
+				return
+			}
+
+			if dataType == "string" {
+				writeErr(w, http.StatusBadRequest, "string keys must be updated via translations endpoint")
+				return
+			}
+
+			if isPublic {
+				writeErr(w, http.StatusBadRequest, "cannot set backend value for public keys")
+				return
+			}
+
+			if err := validateType(dataType, val); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+
+			// Marshal value to JSON for storage; if nil (explicit null), set to NULL
+			if val == nil {
+				if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = NULL, updated_at = NOW() WHERE key = $1`, key); err != nil {
+					writeErr(w, http.StatusInternalServerError, "failed to update value")
+					return
+				}
+				continue
+			}
+
+			b, err := json.Marshal(val)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid JSON value")
+				return
+			}
+			if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = $2::jsonb, updated_at = NOW() WHERE key = $1`, key, string(b)); err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to update value")
 				return
 			}
 		}
