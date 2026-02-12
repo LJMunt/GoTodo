@@ -27,7 +27,7 @@ insert into config_keys (key, description, data_type, is_public, value_json) val
 
                                                                                  ('mail.fromName',
                                                                                   'From name used in outbound emails.',
-                                                                                  'string',ç
+                                                                                  'string',
                                                                                   false,
                                                                                   '"Todexia"'),
 
