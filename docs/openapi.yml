@@ -163,7 +163,9 @@ components:
               enum: [system, light, dark]
             showCompletedDefault:
               type: boolean
-          required: [theme, showCompletedDefault]
+            language:
+              type: string
+          required: [theme, showCompletedDefault, language]
       required: [id, email, is_admin, is_active, last_login, settings]
 
     Occurrence:
@@ -607,6 +609,9 @@ paths:
                     showCompletedDefault:
                       type: boolean
                       description: Default for showing completed tasks in views.
+                    language:
+                      type: string
+                      description: User's preferred language code (e.g., 'en', 'fr').
               anyOf:
                 - required: [ email ]
                 - required: [ settings ]
