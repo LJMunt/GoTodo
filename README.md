@@ -1,7 +1,7 @@
 # GoToDo
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/your-username/GoToDo)](https://go.dev/)
-[![License](https://img.shields.io/github/license/your-username/GoToDo)](LICENSE)
+[![License](https://img.shields.io/github/license/LJMunt/GoToDo)](LICENSE)
 [![API Docs](https://img.shields.io/badge/API-Documentation-blue)](https://docs.todexia.app)
 
 GoToDo is a production-ready, clean, and robust ToDo API built with Go. It serves as a comprehensive backend for task management applications, featuring advanced capabilities like recurring tasks, multi-language support, and administrative controls.
