@@ -233,7 +233,7 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 				return
 			}
 
-			if dataType == "string" {
+			if dataType == "string" && isPublic {
 				writeErr(w, http.StatusBadRequest, "string keys must be updated via translations endpoint")
 				return
 			}

@@ -1555,6 +1555,10 @@ paths:
     put:
       tags: [ Admin ]
       summary: Bulk upsert backend config values (Admin only)
+      description: |
+        Updates backend-only config values.
+        Note: String keys can only be updated here if they are not public (is_public=false).
+        Public string keys must be updated via the translations endpoint.
       requestBody:
         required: true
         content:
@@ -1637,6 +1641,9 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     patch:
       summary: Update user (Admin only)
+      description: |
+        Update user details. 
+        Note: Admins cannot promote other users to admin status.
       requestBody:
         required: true
         content:
@@ -1646,6 +1653,7 @@ paths:
               properties:
                 is_admin:
                   type: boolean
+                  description: "Note: Setting this to true will be rejected as admins cannot create new admins."
                 is_active:
                   type: boolean
                 password:

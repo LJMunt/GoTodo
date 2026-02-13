@@ -214,6 +214,7 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type updateRequest struct {
+		IsAdmin  *bool   `json:"is_admin"`
 		IsActive *bool   `json:"is_active"`
 		Password *string `json:"password"`
 	}
@@ -232,6 +233,11 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		if req.IsAdmin != nil && *req.IsAdmin {
+			writeErr(w, "admins cannot create new admins", http.StatusBadRequest)
+			return
+		}
+
 		if req.IsAdmin == nil && req.IsActive == nil && req.Password == nil {
 			writeErr(w, "no fields to update", http.StatusBadRequest)
 			return
@@ -243,6 +249,10 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		rowsAffected := int64(0)
 
 		if req.IsAdmin != nil {
+			// Even though we check if *req.IsAdmin is true above,
+			// we keep this block to allow setting is_admin = false if it was ever needed,
+			// though the requirement says "ADMINS SHOULD NOT BE ABLE TO MAKE NEW ADMINS".
+			// Setting to false is "making not admin", which is fine.
 			tag, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
 			if err != nil {
 				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
