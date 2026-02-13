@@ -14,6 +14,7 @@ import (
 	"GoToDo/internal/api/admin"
 	"GoToDo/internal/api/auth"
 	"GoToDo/internal/api/config"
+	"GoToDo/internal/api/languages"
 	"GoToDo/internal/api/users"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
@@ -53,6 +54,7 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Get("/health", HealthHandler())
 		r.Get("/ready", ReadyHandler(deps.DB))
 		r.Get("/version", VersionHandler())
+		r.Get("/lang", languages.ListLanguagesHandler(deps.DB))
 		r.Route("/config", func(r chi.Router) {
 			config.Routes(r, deps)
 		})

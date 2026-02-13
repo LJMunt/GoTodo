@@ -256,6 +256,30 @@ components:
       type: object
       description: Nested JSON configuration object (public)
 
+    Language:
+      type: object
+      properties:
+        code:
+          type: string
+          pattern: '^[a-z]{2}(-[a-z]{2})?$'
+          description: Language code, either 2 letters (e.g., en) or format xx-xx (e.g., en-gb)
+        name:
+          type: string
+      required: [code, name]
+
+    AdminLanguage:
+      allOf:
+        - $ref: '#/components/schemas/Language'
+        - type: object
+          properties:
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+          required: [created_at, updated_at]
+
     ConfigValue:
       description: JSON value for non-string config keys.
       oneOf:
@@ -368,6 +392,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppConfig'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/lang:
+    get:
+      tags: [Languages]
+      summary: List languages (public)
+      security: []
+      responses:
+        "200":
+          description: List of supported languages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Language'
         "500":
           $ref: '#/components/responses/InternalServerError'
 
@@ -1580,6 +1621,98 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/lang:
+    get:
+      tags: [ Admin ]
+      summary: List languages (Admin only)
+      responses:
+        "200":
+          description: List of languages with timestamps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminLanguage'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [ Admin ]
+      summary: Create language (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Language'
+      responses:
+        "201":
+          description: Language created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLanguage'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/lang/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [ Admin ]
+      summary: Delete language (Admin only)
+      responses:
+        "204":
+          description: Language deleted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "409":
+          description: Conflict (e.g., default or last language)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
 
   /api/v1/admin/users:
     get:
