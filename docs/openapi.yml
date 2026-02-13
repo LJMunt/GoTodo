@@ -229,6 +229,48 @@ components:
           description: Cache hit ratio percentage
       required: [database_size, connections, deadlocks, blocks_read, blocks_hit, cache_hit_ratio]
 
+    ConfigKey:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Configuration key (supports dot notation for nesting)
+        description:
+          type: string
+          description: Description of the configuration key
+        data_type:
+          type: string
+          enum: [string, boolean, number]
+        is_public:
+          type: boolean
+          description: Whether the key is accessible via the public /config endpoint
+      required: [key, data_type, is_public]
+
+    ConfigTranslations:
+      type: object
+      additionalProperties:
+        type: string
+      description: Key-value pairs for translations in a specific language
+
+    AppConfig:
+      type: object
+      description: Nested JSON configuration object (public)
+
+    ConfigValue:
+      description: JSON value for non-string config keys.
+      oneOf:
+        - type: boolean
+        - type: number
+        - type: object
+        - type: array
+        - type: "null"
+
+    ConfigValues:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/ConfigValue"
+
+
   responses:
     Unauthorized:
       description: Unauthorized
@@ -306,6 +348,28 @@ paths:
                 properties:
                   version:
                     type: string
+
+  /api/v1/config:
+    get:
+      tags: [Config]
+      summary: Get public configuration
+      description: Returns public configuration keys as a nested JSON object. Uses lang parameter or Accept-Language header for translation.
+      security: []
+      parameters:
+        - in: query
+          name: lang
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppConfig'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
 
   /api/v1/auth/signup:
     post:
@@ -1050,6 +1114,7 @@ paths:
           format: date-time
     get:
       summary: List task occurrences
+      description: Lists occurrences for a recurring task owned by the authenticated user.
       responses:
         "200":
           description: List of occurrences
@@ -1069,13 +1134,15 @@ paths:
                 invalid_task_id:
                   value: {error: "invalid task id"}
                 invalid_from:
-                  value: {error: "invalid 'from' parameter"}
+                  value: {error: "invalid from (use RFC3339)"}
                 invalid_to:
-                  value: {error: "invalid 'to' parameter"}
+                  value: {error: "invalid to (use RFC3339)"}
+                invalid_window:
+                  value: {error: "to must be after from"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
-          description: Task not found
+          description: Task not found (or not owned by authenticated user)
           content:
             application/json:
               schema:
@@ -1101,6 +1168,7 @@ paths:
           format: int64
     patch:
       summary: Update task occurrence (e.g., complete it)
+      description: Updates an occurrence for a recurring task owned by the authenticated user.
       requestBody:
         required: true
         content:
@@ -1132,16 +1200,21 @@ paths:
                   value: {error: "invalid task id"}
                 invalid_occurrence_id:
                   value: {error: "invalid occurrence id"}
+                completed_required:
+                  value: {error: "completed is required"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
-          description: Occurrence not found
+          description: Task/occurrence not found (or task not owned by authenticated user)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                error: "occurrence not found"
+              examples:
+                task_not_found:
+                  value: {error: "task not found"}
+                occurrence_not_found:
+                  value: {error: "occurrence not found"}
         "500":
           $ref: '#/components/responses/InternalServerError'
 
@@ -1377,6 +1450,7 @@ paths:
 
   /api/v1/admin/metrics:
     get:
+      tags: [Admin]
       summary: Get database metrics (Admin only)
       responses:
         "200":
@@ -1391,6 +1465,121 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/config/keys:
+    get:
+      tags: [Admin]
+      summary: List configuration keys (Admin only)
+      responses:
+        "200":
+          description: List of configuration keys with metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConfigKey'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/config/translations:
+    get:
+      tags: [Admin]
+      summary: Get translations (Admin only)
+      parameters:
+        - in: query
+          name: lang
+          required: true
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      responses:
+        "200":
+          description: Key-value pairs for the requested language
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigTranslations'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Admin]
+      summary: Bulk upsert translations (Admin only)
+      parameters:
+        - in: query
+          name: lang
+          required: true
+          schema:
+            type: string
+          description: Language code (e.g., en, de-CH)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigTranslations'
+      responses:
+        "204":
+          description: Translations updated
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/config/values:
+    get:
+      tags: [ Admin ]
+      summary: Get backend config values (Admin only)
+      responses:
+        "200":
+          description: Key-value pairs of backend config values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigValues"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    put:
+      tags: [ Admin ]
+      summary: Bulk upsert backend config values (Admin only)
+      description: |
+        Updates backend-only config values.
+        Note: String keys can only be updated here if they are not public (is_public=false).
+        Public string keys must be updated via the translations endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigValues"
+      responses:
+        "204":
+          description: Values updated
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/admin/users:
     get:
@@ -1452,6 +1641,9 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     patch:
       summary: Update user (Admin only)
+      description: |
+        Update user details. 
+        Note: Admins cannot promote other users to admin status.
       requestBody:
         required: true
         content:
@@ -1459,12 +1651,15 @@ paths:
             schema:
               type: object
               properties:
+                is_admin:
+                  type: boolean
+                  description: "Note: Setting this to true will be rejected as admins cannot create new admins."
                 is_active:
                   type: boolean
                 password:
                   type: string
       responses:
-        "200":
+        "204":
           description: User updated
         "400":
           description: Invalid request
@@ -1477,6 +1672,8 @@ paths:
                   value: {error: "invalid request body"}
                 invalid_user_id:
                   value: {error: "invalid user id"}
+                empty_patch:
+                  value: {error: "no fields to update"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":

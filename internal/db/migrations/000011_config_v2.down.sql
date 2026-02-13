@@ -1,0 +1,22 @@
+delete from config_translations where language_code in ('fr', 'de') and key in (
+  'branding.appName',
+  'branding.appLogoInitial',
+  'branding.supportEmail',
+  'auth.loginTitle',
+  'auth.loginSubtitle',
+  'auth.signupTitle',
+  'auth.signupSubtitle',
+  'ui.agendaTitle',
+  'ui.agendaEmptyStateTitle',
+  'ui.agendaEmptyStateText',
+  'navigation.agenda',
+  'navigation.projects',
+  'navigation.dashboard',
+  'navigation.users',
+  'navigation.configuration',
+  'navigation.jobs',
+  'navigation.userSettings',
+  'navigation.administration',
+  'navigation.support',
+  'navigation.logout'
+);

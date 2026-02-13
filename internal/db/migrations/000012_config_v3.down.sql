@@ -1,0 +1,41 @@
+delete from config_translations where key in (
+  'auth.emailLabel', 'auth.passwordLabel', 'auth.currentPasswordLabel', 'auth.newPasswordLabel',
+  'auth.signInButton', 'auth.signUpButton', 'auth.creatingAccount', 'auth.signingIn',
+  'auth.noAccountPrompt', 'auth.createOneLink', 'auth.alreadyHaveAccountPrompt', 'auth.signInLink',
+  'ui.today', 'ui.showCompleted', 'ui.itemsCount', 'ui.noTasksFound', 'ui.projectEmptyStateText',
+  'ui.searchPlaceholder', 'ui.loading', 'ui.errorPrefix', 'ui.saveChanges', 'ui.reset',
+  'ui.saving', 'ui.actions', 'ui.cancel', 'ui.confirm', 'ui.active', 'ui.inactive',
+  'ui.status', 'ui.role', 'ui.lastLogin', 'ui.neverLoggedIn', 'ui.id', 'ui.email',
+  'ui.allRoles', 'ui.adminsOnly', 'ui.usersOnly', 'ui.allStatus', 'ui.changeUserStatus',
+  'ui.you', 'ui.adminRole', 'ui.userRole', 'ui.never', 'ui.systemStatus',
+  'ui.systemInformation', 'ui.backendHealth', 'ui.dbReady', 'ui.webVersion',
+  'ui.backendVersion', 'ui.totalUsers', 'ui.databaseMetrics', 'ui.databaseSize',
+  'ui.activeConnections', 'ui.cacheHitRatio', 'ui.deadlocks', 'ui.blocksRead',
+  'ui.blocksHit', 'ui.passwordSecurity', 'ui.atLeast8Chars', 'ui.uppercaseLetter',
+  'ui.lowercaseLetter', 'ui.numberRequirement', 'ui.specialCharRequirement',
+  'ui.appTheme', 'ui.themeDescription', 'ui.completedTasks',
+  'ui.completedTasksDescription', 'ui.language', 'ui.languageDescription',
+  'ui.account', 'ui.preferences', 'ui.security', 'ui.edit', 'ui.save',
+  'ui.settingsTitle', 'ui.settingsSubtitle', 'navigation.userData'
+);
+
+delete from config_keys where key in (
+  'auth.emailLabel', 'auth.passwordLabel', 'auth.currentPasswordLabel', 'auth.newPasswordLabel',
+  'auth.signInButton', 'auth.signUpButton', 'auth.creatingAccount', 'auth.signingIn',
+  'auth.noAccountPrompt', 'auth.createOneLink', 'auth.alreadyHaveAccountPrompt', 'auth.signInLink',
+  'ui.today', 'ui.showCompleted', 'ui.itemsCount', 'ui.noTasksFound', 'ui.projectEmptyStateText',
+  'ui.searchPlaceholder', 'ui.loading', 'ui.errorPrefix', 'ui.saveChanges', 'ui.reset',
+  'ui.saving', 'ui.actions', 'ui.cancel', 'ui.confirm', 'ui.active', 'ui.inactive',
+  'ui.status', 'ui.role', 'ui.lastLogin', 'ui.neverLoggedIn', 'ui.id', 'ui.email',
+  'ui.allRoles', 'ui.adminsOnly', 'ui.usersOnly', 'ui.allStatus', 'ui.changeUserStatus',
+  'ui.you', 'ui.adminRole', 'ui.userRole', 'ui.never', 'ui.systemStatus',
+  'ui.systemInformation', 'ui.backendHealth', 'ui.dbReady', 'ui.webVersion',
+  'ui.backendVersion', 'ui.totalUsers', 'ui.databaseMetrics', 'ui.databaseSize',
+  'ui.activeConnections', 'ui.cacheHitRatio', 'ui.deadlocks', 'ui.blocksRead',
+  'ui.blocksHit', 'ui.passwordSecurity', 'ui.atLeast8Chars', 'ui.uppercaseLetter',
+  'ui.lowercaseLetter', 'ui.numberRequirement', 'ui.specialCharRequirement',
+  'ui.appTheme', 'ui.themeDescription', 'ui.completedTasks',
+  'ui.completedTasksDescription', 'ui.language', 'ui.languageDescription',
+  'ui.account', 'ui.preferences', 'ui.security', 'ui.edit', 'ui.save',
+  'ui.settingsTitle', 'ui.settingsSubtitle', 'navigation.userData'
+);

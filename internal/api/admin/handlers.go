@@ -233,23 +233,41 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		if req.IsAdmin != nil && *req.IsAdmin {
+			writeErr(w, "admins cannot create new admins", http.StatusBadRequest)
+			return
+		}
+
+		if req.IsAdmin == nil && req.IsActive == nil && req.Password == nil {
+			writeErr(w, "no fields to update", http.StatusBadRequest)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		rowsAffected := int64(0)
+
 		if req.IsAdmin != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
+			// Even though we check if *req.IsAdmin is true above,
+			// we keep this block to allow setting is_admin = false if it was ever needed,
+			// though the requirement says "ADMINS SHOULD NOT BE ABLE TO MAKE NEW ADMINS".
+			// Setting to false is "making not admin", which is fine.
+			tag, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
 			if err != nil {
 				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
 				return
 			}
+			rowsAffected += tag.RowsAffected()
 		}
 
 		if req.IsActive != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
+			tag, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
 			if err != nil {
 				writeErr(w, "failed to update is_active", http.StatusInternalServerError)
 				return
 			}
+			rowsAffected += tag.RowsAffected()
 		}
 
 		if req.Password != nil {
@@ -262,11 +280,17 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, "failed to hash password", http.StatusInternalServerError)
 				return
 			}
-			_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), id)
+			tag, err := db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), id)
 			if err != nil {
 				writeErr(w, "failed to update password", http.StatusInternalServerError)
 				return
 			}
+			rowsAffected += tag.RowsAffected()
+		}
+
+		if rowsAffected == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -716,7 +740,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// ✅ Verify project exists, belongs to user, and is not deleted (unless include_deleted=true)
+		// Verify project exists, belongs to user, and is not deleted (unless include_deleted=true)
 		var projectOK bool
 		if err := db.QueryRow(ctx,
 			`SELECT EXISTS(
