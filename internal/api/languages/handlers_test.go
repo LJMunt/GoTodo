@@ -142,18 +142,32 @@ func TestAdminCreateLanguageHandler_Validation(t *testing.T) {
 }
 
 func TestAdminDeleteLanguageHandler_Safety(t *testing.T) {
+	// Mocking config lookup
+	mockDefaultLang := "\"en\""
+	queryCount := 0
+
 	db := &fakeDB{
 		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
 			return &fakeRow{
 				scanFn: func(dest ...any) error {
-					*dest[0].(*int) = 2
+					if queryCount == 0 {
+						// First query is for default language
+						*dest[0].(*string) = mockDefaultLang
+					} else {
+						// Second query is for language count
+						*dest[0].(*int) = 2
+					}
+					queryCount++
 					return nil
 				},
 			}
 		},
+		execFn: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			return pgconn.NewCommandTag("DELETE 1"), nil
+		},
 	}
 
-	// Try to delete 'en'
+	// Try to delete 'en' (which is the default in this mock)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/lang/en", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "en")
@@ -164,5 +178,22 @@ func TestAdminDeleteLanguageHandler_Safety(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Errorf("expected status 409 for default language deletion, got %d", rec.Code)
+	}
+
+	// Reset query count and change mock to different default
+	queryCount = 0
+	mockDefaultLang = "\"fr\""
+
+	// Try to delete 'en' when 'fr' is default - should be allowed now that we removed hardcoded 'en' protection
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/admin/lang/en", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("code", "en")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec = httptest.NewRecorder()
+
+	AdminDeleteLanguageHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusConflict {
+		t.Errorf("expected status other than 409 for non-default 'en' deletion, got %d", rec.Code)
 	}
 }

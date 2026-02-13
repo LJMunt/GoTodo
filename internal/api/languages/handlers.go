@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -151,18 +152,29 @@ func AdminDeleteLanguageHandler(db languageDB) http.HandlerFunc {
 			return
 		}
 
-		// Requirement: cannot delete default language
-		if code == "en" {
-			writeErr(w, http.StatusConflict, "cannot delete default language")
-			return
-		}
-
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		// Requirement: cannot delete default language
+		var defaultLang string
+		err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'defaults.userLanguage'").Scan(&defaultLang)
+		if err == nil {
+			// Strip quotes from JSON string
+			defaultLang = strings.Trim(defaultLang, "\"")
+			if code == defaultLang {
+				writeErr(w, http.StatusConflict, "cannot delete default language")
+				return
+			}
+		}
+
+		// Also prevent deleting 'en' if it's currently hardcoded in any secondary fallbacks
+		// but since we made the trigger dynamic, this is less critical.
+		// However, for consistency with the system's "original" intent, we might want to keep one base language.
+		// If the user wants to remove 'en' entirely, they should be able to as long as it's not the default.
+
 		// Requirement: cannot delete last active language
 		var count int
-		err := db.QueryRow(ctx, "SELECT COUNT(*) FROM languages").Scan(&count)
+		err = db.QueryRow(ctx, "SELECT COUNT(*) FROM languages").Scan(&count)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to check language count")
 			return

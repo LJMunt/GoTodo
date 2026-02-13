@@ -38,20 +38,33 @@ func GetConfigHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		if lang == "" {
-			lang = "en"
-		}
-
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		var defaultLang string
+		err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'defaults.userLanguage'").Scan(&defaultLang)
+		if err != nil {
+			// If config lookup fails, try to pick any language from the languages table
+			err = db.QueryRow(ctx, "SELECT code FROM languages ORDER BY code ASC LIMIT 1").Scan(&defaultLang)
+			if err != nil {
+				// Absolute fallback if table is empty or query fails
+				defaultLang = "en"
+			}
+		} else {
+			defaultLang = strings.Trim(defaultLang, "\"")
+		}
+
+		if lang == "" {
+			lang = defaultLang
+		}
+
 		rows, err := db.Query(ctx, `
-			SELECT ck.key, ck.data_type, COALESCE(ct.value, ct_en.value, '') as value
+			SELECT ck.key, ck.data_type, COALESCE(ct.value, ct_def.value, '') as value
 			FROM config_keys ck
 			LEFT JOIN config_translations ct ON ck.key = ct.key AND ct.language_code = $1
-			LEFT JOIN config_translations ct_en ON ck.key = ct_en.key AND ct_en.language_code = 'en'
+			LEFT JOIN config_translations ct_def ON ck.key = ct_def.key AND ct_def.language_code = $2
 			WHERE ck.is_public = true
-		`, lang)
+		`, lang, defaultLang)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch configuration")
 			return
