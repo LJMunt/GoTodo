@@ -52,7 +52,7 @@ func recurringTaskVisible(ctx context.Context, db *pgxpool.Pool, userID, taskID 
 		   FROM tasks t
 		   JOIN projects p ON p.id = t.project_id
 		   WHERE t.id = $1
-		     AND (t.user_id = $2 OR EXISTS (SELECT 1 FROM users WHERE id = $2 AND is_admin = true))
+		     AND t.user_id = $2
 		     AND t.deleted_at IS NULL
 		     AND p.deleted_at IS NULL
 		     AND t.repeat_every IS NOT NULL

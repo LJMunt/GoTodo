@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestJWT(t *testing.T) {
@@ -46,6 +48,27 @@ func TestJWT(t *testing.T) {
 		_, err := ParseToken("invalid-token-string")
 		if err == nil {
 			t.Error("expected error for invalid token")
+		}
+	})
+
+	t.Run("RejectsUnexpectedAlgorithm", func(t *testing.T) {
+		claims := Claims{
+			UserID: 123,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+			},
+		}
+
+		token := jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+		tokenString, err := token.SignedString([]byte("test-secret"))
+		if err != nil {
+			t.Fatalf("failed to sign token: %v", err)
+		}
+
+		_, err = ParseToken(tokenString)
+		if err == nil {
+			t.Error("expected error for unexpected signing algorithm")
 		}
 	})
 
