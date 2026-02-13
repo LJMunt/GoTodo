@@ -2,6 +2,7 @@ package admin
 
 import (
 	"GoToDo/internal/api/config"
+	"GoToDo/internal/api/languages"
 	"GoToDo/internal/app"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,12 @@ func Routes(r chi.Router, deps app.Deps) {
 
 	r.Route("/config", func(r chi.Router) {
 		config.AdminRoutes(r, deps)
+	})
+
+	r.Route("/lang", func(r chi.Router) {
+		r.Get("/", languages.AdminListLanguagesHandler(deps.DB))
+		r.Post("/", languages.AdminCreateLanguageHandler(deps.DB))
+		r.Delete("/{code}", languages.AdminDeleteLanguageHandler(deps.DB))
 	})
 
 	r.Route("/users", func(r chi.Router) {

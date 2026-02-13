@@ -18,6 +18,7 @@ import (
 type userSettings struct {
 	Theme                string `json:"theme"`
 	ShowCompletedDefault bool   `json:"showCompletedDefault"`
+	Language             string `json:"language"`
 }
 
 type userMeResponse struct {
@@ -61,10 +62,10 @@ func MeHandler(db userDB) http.HandlerFunc {
 
 		var res userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default 
+			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.Settings.Theme, &res.Settings.ShowCompletedDefault)
+		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeErr(w, http.StatusNotFound, "user not found")
@@ -139,21 +140,34 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 				writeErr(w, http.StatusInternalServerError, "failed to update showCompletedDefault")
 				return
 			}
+
+			if req.Settings.Language != "" {
+				_, err := db.Exec(ctx, "UPDATE users SET language = $1, updated_at = now() WHERE id = $2", req.Settings.Language, u.ID)
+				if err != nil {
+					var pgErr *pgconn.PgError
+					if errors.As(err, &pgErr) && pgErr.Code == "23503" { // foreign_key_violation
+						writeErr(w, http.StatusBadRequest, "invalid language code")
+						return
+					}
+					writeErr(w, http.StatusInternalServerError, "failed to update language")
+					return
+				}
+			}
 		}
 
 		// Fetch and return updated user
-		var res userMeResponse
+		var updatedRes userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default 
+			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.Settings.Theme, &res.Settings.ShowCompletedDefault)
+		).Scan(&updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch updated user")
 			return
 		}
-		res.ID = u.ID
-		writeJSON(w, http.StatusOK, res)
+		updatedRes.ID = u.ID
+		writeJSON(w, http.StatusOK, updatedRes)
 	}
 }
 
