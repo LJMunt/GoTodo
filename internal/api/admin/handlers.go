@@ -721,7 +721,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// ✅ Verify project exists, belongs to user, and is not deleted (unless include_deleted=true)
+		// Verify project exists, belongs to user, and is not deleted (unless include_deleted=true)
 		var projectOK bool
 		if err := db.QueryRow(ctx,
 			`SELECT EXISTS(
