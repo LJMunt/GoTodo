@@ -214,7 +214,6 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type updateRequest struct {
-		IsAdmin  *bool   `json:"is_admin"`
 		IsActive *bool   `json:"is_active"`
 		Password *string `json:"password"`
 	}
@@ -233,23 +232,23 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		if req.IsActive == nil && req.Password == nil {
+			writeErr(w, "no fields to update", http.StatusBadRequest)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		if req.IsAdmin != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
-			if err != nil {
-				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
-				return
-			}
-		}
+		rowsAffected := int64(0)
 
 		if req.IsActive != nil {
-			_, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
+			tag, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
 			if err != nil {
 				writeErr(w, "failed to update is_active", http.StatusInternalServerError)
 				return
 			}
+			rowsAffected += tag.RowsAffected()
 		}
 
 		if req.Password != nil {
@@ -262,11 +261,17 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, "failed to hash password", http.StatusInternalServerError)
 				return
 			}
-			_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), id)
+			tag, err := db.Exec(ctx, "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", string(hash), id)
 			if err != nil {
 				writeErr(w, "failed to update password", http.StatusInternalServerError)
 				return
 			}
+			rowsAffected += tag.RowsAffected()
+		}
+
+		if rowsAffected == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)

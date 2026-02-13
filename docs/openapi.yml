@@ -1114,6 +1114,7 @@ paths:
           format: date-time
     get:
       summary: List task occurrences
+      description: Lists occurrences for a recurring task owned by the authenticated user.
       responses:
         "200":
           description: List of occurrences
@@ -1133,13 +1134,15 @@ paths:
                 invalid_task_id:
                   value: {error: "invalid task id"}
                 invalid_from:
-                  value: {error: "invalid 'from' parameter"}
+                  value: {error: "invalid from (use RFC3339)"}
                 invalid_to:
-                  value: {error: "invalid 'to' parameter"}
+                  value: {error: "invalid to (use RFC3339)"}
+                invalid_window:
+                  value: {error: "to must be after from"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
-          description: Task not found
+          description: Task not found (or not owned by authenticated user)
           content:
             application/json:
               schema:
@@ -1165,6 +1168,7 @@ paths:
           format: int64
     patch:
       summary: Update task occurrence (e.g., complete it)
+      description: Updates an occurrence for a recurring task owned by the authenticated user.
       requestBody:
         required: true
         content:
@@ -1196,16 +1200,21 @@ paths:
                   value: {error: "invalid task id"}
                 invalid_occurrence_id:
                   value: {error: "invalid occurrence id"}
+                completed_required:
+                  value: {error: "completed is required"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
-          description: Occurrence not found
+          description: Task/occurrence not found (or task not owned by authenticated user)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                error: "occurrence not found"
+              examples:
+                task_not_found:
+                  value: {error: "task not found"}
+                occurrence_not_found:
+                  value: {error: "occurrence not found"}
         "500":
           $ref: '#/components/responses/InternalServerError'
 
@@ -1640,7 +1649,7 @@ paths:
                 password:
                   type: string
       responses:
-        "200":
+        "204":
           description: User updated
         "400":
           description: Invalid request
@@ -1653,6 +1662,8 @@ paths:
                   value: {error: "invalid request body"}
                 invalid_user_id:
                   value: {error: "invalid user id"}
+                empty_patch:
+                  value: {error: "no fields to update"}
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":

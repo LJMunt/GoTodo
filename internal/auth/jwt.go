@@ -45,10 +45,17 @@ func ParseToken(tokenString string) (*Claims, error) {
 		return nil, fmt.Errorf("JWT_SECRET is not set")
 	}
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return []byte(secret), nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
 	}
 
 	claims, ok := token.Claims.(*Claims)
