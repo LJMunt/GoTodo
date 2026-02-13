@@ -127,7 +127,7 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		token, err := authmw.SignToken(id) // ✅ only userID in JWT now
+		token, err := authmw.SignToken(id) // only userID in JWT now
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
@@ -185,7 +185,7 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		// Update last_login
 		_, _ = db.Exec(ctx, "UPDATE users SET last_login = now() WHERE id = $1", id)
 
-		token, err := authmw.SignToken(id) // ✅ only userID in JWT now
+		token, err := authmw.SignToken(id) // only userID in JWT now
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
