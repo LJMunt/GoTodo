@@ -1,6 +1,6 @@
 # GoToDo
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/your-username/GoToDo)](https://go.dev/)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/LJMunt/GoToDo)](https://go.dev/)
 [![License](https://img.shields.io/github/license/LJMunt/GoToDo)](LICENSE)
 [![API Docs](https://img.shields.io/badge/API-Documentation-blue)](https://docs.todexia.app)
 
