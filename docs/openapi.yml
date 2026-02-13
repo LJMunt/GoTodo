@@ -1644,6 +1644,8 @@ paths:
             schema:
               type: object
               properties:
+                is_admin:
+                  type: boolean
                 is_active:
                   type: boolean
                 password:

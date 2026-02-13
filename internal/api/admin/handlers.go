@@ -232,7 +232,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		if req.IsActive == nil && req.Password == nil {
+		if req.IsAdmin == nil && req.IsActive == nil && req.Password == nil {
 			writeErr(w, "no fields to update", http.StatusBadRequest)
 			return
 		}
@@ -241,6 +241,15 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		rowsAffected := int64(0)
+
+		if req.IsAdmin != nil {
+			tag, err := db.Exec(ctx, "UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2", *req.IsAdmin, id)
+			if err != nil {
+				writeErr(w, "failed to update is_admin", http.StatusInternalServerError)
+				return
+			}
+			rowsAffected += tag.RowsAffected()
+		}
 
 		if req.IsActive != nil {
 			tag, err := db.Exec(ctx, "UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2", *req.IsActive, id)
