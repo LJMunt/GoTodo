@@ -338,6 +338,7 @@ components:
 paths:
   /api/v1/health:
     get:
+      tags: [Health]
       summary: Health check
       security: []
       responses:
@@ -352,6 +353,7 @@ paths:
                     type: string
   /api/v1/ready:
     get:
+      tags: [Health]
       summary: Readiness check
       security: []
       responses:
@@ -362,6 +364,7 @@ paths:
 
   /api/v1/version:
     get:
+      tags: [Health]
       summary: Version check
       security: []
       responses:
@@ -416,6 +419,7 @@ paths:
 
   /api/v1/auth/signup:
     post:
+      tags: [Auth]
       summary: User signup
       security: []
       requestBody:
@@ -473,6 +477,7 @@ paths:
 
   /api/v1/auth/login:
     post:
+      tags: [Auth]
       summary: Login
       security: []
       requestBody:
@@ -519,6 +524,7 @@ paths:
           $ref: '#/components/responses/InternalServerError'
   /api/v1/auth/password-change:
     post:
+      tags: [Auth]
       summary: Change password
       description: Changes the authenticated user's password. Requires the current password.
       requestBody:
@@ -564,6 +570,7 @@ paths:
 
   /api/v1/users/me:
     get:
+      tags: [Users]
       summary: Get current user info
       responses:
         "200":
@@ -585,6 +592,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     patch:
+      tags: [Users]
       summary: Update my user profile
       description: Partially updates the authenticated user's profile and/or settings.
       requestBody:
@@ -639,6 +647,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
     delete:
+      tags: [Users]
       summary: Delete my account
       description: Deletes the authenticated user's account and all associated data.
       requestBody:
@@ -672,6 +681,7 @@ paths:
 
   /api/v1/projects:
     get:
+      tags: [Projects]
       summary: List projects
       responses:
         "200":
@@ -687,6 +697,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     post:
+      tags: [Projects]
       summary: Create project
       requestBody:
         required: true
@@ -741,6 +752,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Projects]
       summary: Get project
       responses:
         "200":
@@ -770,6 +782,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     patch:
+      tags: [Projects]
       summary: Update project
       requestBody:
         required: true
@@ -809,6 +822,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     delete:
+      tags: [Projects]
       summary: Delete project
       responses:
         "204":
@@ -843,6 +857,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Projects]
       summary: List tasks in project
       responses:
         "200":
@@ -866,6 +881,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     post:
+      tags: [Projects]
       summary: Create task in project
       requestBody:
         required: true
@@ -936,6 +952,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Tasks]
       summary: Get task
       responses:
         "200":
@@ -965,6 +982,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     patch:
+      tags: [Tasks]
       summary: Update task
       requestBody:
         required: true
@@ -1028,6 +1046,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     delete:
+      tags: [Tasks]
       summary: Delete task
       responses:
         "204":
@@ -1062,6 +1081,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Tasks]
       summary: Get task tags
       responses:
         "200":
@@ -1093,6 +1113,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     put:
+      tags: [Tasks]
       summary: Set task tags
       requestBody:
         required: true
@@ -1159,6 +1180,7 @@ paths:
           type: string
           format: date-time
     get:
+      tags: [Tasks]
       summary: List task occurrences
       description: Lists occurrences for a recurring task owned by the authenticated user.
       responses:
@@ -1213,6 +1235,7 @@ paths:
           type: integer
           format: int64
     patch:
+      tags: [Tasks]
       summary: Update task occurrence (e.g., complete it)
       description: Updates an occurrence for a recurring task owned by the authenticated user.
       requestBody:
@@ -1266,6 +1289,7 @@ paths:
 
   /api/v1/tags:
     get:
+      tags: [Tasks]
       summary: List user tags
       responses:
         "200":
@@ -1281,6 +1305,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     post:
+      tags: [Tasks]
       summary: Create tag
       requestBody:
         required: true
@@ -1354,6 +1379,7 @@ paths:
           type: integer
           format: int64
     patch:
+      tags: [Tasks]
       summary: Rename tag
       requestBody:
         required: true
@@ -1430,6 +1456,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     delete:
+      tags: [Tasks]
       summary: Delete tag
       responses:
         "204":
@@ -1457,6 +1484,7 @@ paths:
 
   /api/v1/agenda:
     get:
+      tags: [Agenda]
       summary: Get agenda
       parameters:
         - name: from
@@ -1583,7 +1611,7 @@ paths:
           $ref: '#/components/responses/InternalServerError'
   /api/v1/admin/config/values:
     get:
-      tags: [ Admin ]
+      tags: [Admin]
       summary: Get backend config values (Admin only)
       responses:
         "200":
@@ -1599,7 +1627,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
     put:
-      tags: [ Admin ]
+      tags: [Admin]
       summary: Bulk upsert backend config values (Admin only)
       description: |
         Updates backend-only config values.
@@ -1629,7 +1657,7 @@ paths:
 
   /api/v1/admin/lang:
     get:
-      tags: [ Admin ]
+      tags: [Admin]
       summary: List languages (Admin only)
       responses:
         "200":
@@ -1647,7 +1675,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     post:
-      tags: [ Admin ]
+      tags: [Admin]
       summary: Create language (Admin only)
       requestBody:
         required: true
@@ -1689,7 +1717,7 @@ paths:
         schema:
           type: string
     delete:
-      tags: [ Admin ]
+      tags: [Admin]
       summary: Delete language (Admin only)
       responses:
         "204":
@@ -1721,6 +1749,7 @@ paths:
 
   /api/v1/admin/users:
     get:
+      tags: [Admin]
       summary: List users (Admin only)
       responses:
         "200":
@@ -1747,6 +1776,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: Get user (Admin only)
       responses:
         "200":
@@ -1778,6 +1808,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     patch:
+      tags: [Admin]
       summary: Update user (Admin only)
       description: |
         Update user details. 
@@ -1827,6 +1858,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     delete:
+      tags: [Admin]
       summary: Delete user (Admin only)
       responses:
         "204":
@@ -1863,6 +1895,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: List user projects (Admin only)
       responses:
         "200":
@@ -1903,6 +1936,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: Get user project (Admin only)
       responses:
         "200":
@@ -1937,6 +1971,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     patch:
+      tags: [Admin]
       summary: Update user project (Admin only)
       responses:
         "200":
@@ -1971,6 +2006,7 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
     delete:
+      tags: [Admin]
       summary: Delete user project (Admin only)
       responses:
         "204":
@@ -2016,6 +2052,7 @@ paths:
           type: integer
           format: int64
     post:
+      tags: [Admin]
       summary: Restore user project (Admin only)
       responses:
         "200":
@@ -2055,6 +2092,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: List user tasks (Admin only)
       responses:
         "200":
@@ -2095,6 +2133,7 @@ paths:
           type: integer
           format: int64
     delete:
+      tags: [Admin]
       summary: Delete user task (Admin only)
       responses:
         "204":
@@ -2140,6 +2179,7 @@ paths:
           type: integer
           format: int64
     post:
+      tags: [Admin]
       summary: Restore user task (Admin only)
       responses:
         "200":
@@ -2185,6 +2225,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: List user project tasks (Admin only)
       responses:
         "200":
@@ -2222,6 +2263,7 @@ paths:
           type: integer
           format: int64
     get:
+      tags: [Admin]
       summary: List user tags (Admin only)
       responses:
         "200":
@@ -2262,6 +2304,7 @@ paths:
           type: integer
           format: int64
     delete:
+      tags: [Admin]
       summary: Delete user tag (Admin only)
       responses:
         "204":
