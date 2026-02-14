@@ -35,15 +35,37 @@ func main() {
 	// Locate SQL file
 	sqlPath := os.Getenv("RESTORE_SQL_PATH")
 	if sqlPath == "" {
-		// Try to find the project root by looking for go.mod
+		// Try to find the project root by looking for go.mod.
 		root := "."
+		foundRoot := false
 		for range 5 { // Look up to 5 levels up
 			if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+				foundRoot = true
 				break
 			}
 			root = filepath.Join("..", root)
 		}
-		sqlPath = filepath.Join(root, "internal", "db", "restore_languages.sql")
+
+		candidates := []string{}
+		if foundRoot {
+			candidates = append(candidates, filepath.Join(root, "internal", "db", "restore_languages.sql"))
+		}
+
+		// Try next to the binary (useful for container images).
+		if exePath, err := os.Executable(); err == nil {
+			exeDir := filepath.Dir(exePath)
+			candidates = append(candidates, filepath.Join(exeDir, "internal", "db", "restore_languages.sql"))
+		}
+
+		// Common container path.
+		candidates = append(candidates, "/app/internal/db/restore_languages.sql")
+
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				sqlPath = candidate
+				break
+			}
+		}
 	}
 
 	content, err := os.ReadFile(sqlPath)
