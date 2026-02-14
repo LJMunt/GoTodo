@@ -1,0 +1,20 @@
+delete from config_keys where key in (
+  'updatedSuccess',
+  'deleteAccountButton',
+  'deleteAccountTitle',
+  'deleteAccountPermanent',
+  'deleteAccountConfirmation',
+  'confirmPasswordLabel',
+  'enterPasswordPlaceholder',
+  'deleteAccountAgreement',
+  'noUsersFound',
+  'noUsersFoundDescription',
+  'cannotInactivateSelf',
+  'inactivateWarning',
+  'addLanguageTitle',
+  'addLanguageSubtitle',
+  'languageCodeLabel',
+  'displayNameLabel',
+  'addingLanguage',
+  'addLanguageButton'
+);
