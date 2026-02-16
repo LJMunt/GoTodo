@@ -25,6 +25,10 @@ components:
       properties:
         error:
           type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
       required: [error]
 
     User:
@@ -258,6 +262,25 @@ components:
       type: object
       description: Nested JSON configuration object (public)
 
+    ConfigStatus:
+      type: object
+      properties:
+        auth:
+          type: object
+          properties:
+            allowSignup:
+              type: boolean
+            requireEmailVerification:
+              type: boolean
+          required: [allowSignup, requireEmailVerification]
+        instance:
+          type: object
+          properties:
+            readOnly:
+              type: boolean
+          required: [readOnly]
+      required: [auth, instance]
+
     Language:
       type: object
       properties:
@@ -378,6 +401,22 @@ paths:
                   version:
                     type: string
 
+  /api/v1/config/status:
+    get:
+      tags: [Config]
+      summary: Get backend configuration status
+      description: Returns the status of backend configuration flags (e.g., if signup is allowed).
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigStatus'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
   /api/v1/config:
     get:
       tags: [Config]
@@ -472,6 +511,16 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: "email already exists"
+        "403":
+          description: Signup disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "signup_disabled"
+                message: "New account registration is currently disabled."
+                retryable: false
         "500":
           $ref: '#/components/responses/InternalServerError'
 

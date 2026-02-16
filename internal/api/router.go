@@ -56,6 +56,7 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Get("/version", VersionHandler())
 		r.Get("/lang", languages.ListLanguagesHandler(deps.DB))
 		r.Route("/config", func(r chi.Router) {
+			r.Get("/status", config.GetConfigStatusHandler(deps.DB))
 			config.Routes(r, deps)
 		})
 
