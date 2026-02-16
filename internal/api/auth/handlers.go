@@ -31,7 +31,9 @@ type userCreatedResponse struct {
 }
 
 type apiError struct {
-	Error string `json:"error"`
+	Error     string `json:"error"`
+	Message   string `json:"message,omitempty"`
+	Retryable bool   `json:"retryable,omitempty"`
 }
 
 type authDB interface {
@@ -85,6 +87,23 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 func SignupHandler(db authDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// Check if signup is allowed
+		var val string
+		err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.allowSignup'").Scan(&val)
+		if err == nil {
+			if strings.Trim(val, "\"") == "false" {
+				writeJSON(w, http.StatusForbidden, apiError{
+					Error:     "signup_disabled",
+					Message:   "New account registration is currently disabled.",
+					Retryable: false,
+				})
+				return
+			}
+		}
+
 		var req credentials
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -107,7 +126,7 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel = context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
 		var id int64

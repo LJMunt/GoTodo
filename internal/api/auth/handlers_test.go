@@ -37,7 +37,15 @@ func TestSignupHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
 
 	db := fakeAuthDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
+		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.allowSignup'" {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*string) = "true"
+						return nil
+					},
+				}
+			}
 			return fakeRow{
 				scanFn: func(dest ...any) error {
 					*dest[0].(*int64) = 42
@@ -74,7 +82,15 @@ func TestSignupHandler_Success(t *testing.T) {
 
 func TestSignupHandler_DuplicateEmail(t *testing.T) {
 	db := fakeAuthDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
+		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.allowSignup'" {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*string) = "true"
+						return nil
+					},
+				}
+			}
 			return fakeRow{
 				scanFn: func(_ ...any) error {
 					return &pgconn.PgError{Code: "23505"}
@@ -99,6 +115,50 @@ func TestSignupHandler_DuplicateEmail(t *testing.T) {
 	}
 	if resp.Error != "email already exists" {
 		t.Fatalf("unexpected error %q", resp.Error)
+	}
+}
+
+func TestSignupHandler_Disabled(t *testing.T) {
+	db := fakeAuthDB{
+		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.allowSignup'" {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*string) = "false"
+						return nil
+					},
+				}
+			}
+			return fakeRow{
+				scanFn: func(_ ...any) error {
+					return nil
+				},
+			}
+		},
+	}
+
+	body := `{"email":"test@example.com","password":"Password123!"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	SignupHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+
+	var resp apiError
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error != "signup_disabled" {
+		t.Fatalf("expected error signup_disabled, got %q", resp.Error)
+	}
+	if resp.Message != "New account registration is currently disabled." {
+		t.Fatalf("unexpected message: %q", resp.Message)
+	}
+	if resp.Retryable != false {
+		t.Fatal("expected retryable to be false")
 	}
 }
 
