@@ -136,10 +136,10 @@ func TestDecryptString_WrongKeyFails(t *testing.T) {
 func TestLoadMasterKey_FromFile(t *testing.T) {
 	// Ensure env isolation
 	oldFile := os.Getenv("APP_MASTER_KEY_FILE")
-	oldB64 := os.Getenv("APP_MASTER_KEY_B64")
+	oldB64 := os.Getenv("SECRETS_MASTER_KEY_B64")
 	t.Cleanup(func() {
 		_ = os.Setenv("APP_MASTER_KEY_FILE", oldFile)
-		_ = os.Setenv("APP_MASTER_KEY_B64", oldB64)
+		_ = os.Setenv("SECRETS_MASTER_KEY_B64", oldB64)
 	})
 
 	// Create key and write to file (base64 string), like Docker/K8s secret file
@@ -152,7 +152,7 @@ func TestLoadMasterKey_FromFile(t *testing.T) {
 		t.Fatalf("WriteFile error: %v", err)
 	}
 
-	_ = os.Unsetenv("APP_MASTER_KEY_B64")
+	_ = os.Unsetenv("SECRETS_MASTER_KEY_B64")
 	if err := os.Setenv("APP_MASTER_KEY_FILE", path); err != nil {
 		t.Fatalf("Setenv error: %v", err)
 	}
@@ -172,17 +172,17 @@ func TestLoadMasterKey_FromFile(t *testing.T) {
 func TestLoadMasterKey_FromEnvFallback(t *testing.T) {
 	// Ensure env isolation
 	oldFile := os.Getenv("APP_MASTER_KEY_FILE")
-	oldB64 := os.Getenv("APP_MASTER_KEY_B64")
+	oldB64 := os.Getenv("SECRETS_MASTER_KEY_B64")
 	t.Cleanup(func() {
 		_ = os.Setenv("APP_MASTER_KEY_FILE", oldFile)
-		_ = os.Setenv("APP_MASTER_KEY_B64", oldB64)
+		_ = os.Setenv("SECRETS_MASTER_KEY_B64", oldB64)
 	})
 
 	_ = os.Unsetenv("APP_MASTER_KEY_FILE")
 
 	key := mustKey32(t)
 	keyB64 := base64.StdEncoding.EncodeToString(key)
-	if err := os.Setenv("APP_MASTER_KEY_B64", keyB64); err != nil {
+	if err := os.Setenv("SECRETS_MASTER_KEY_B64", keyB64); err != nil {
 		t.Fatalf("Setenv error: %v", err)
 	}
 
@@ -200,14 +200,14 @@ func TestLoadMasterKey_FromEnvFallback(t *testing.T) {
 
 func TestLoadMasterKey_NoKeyConfigured(t *testing.T) {
 	oldFile := os.Getenv("APP_MASTER_KEY_FILE")
-	oldB64 := os.Getenv("APP_MASTER_KEY_B64")
+	oldB64 := os.Getenv("SECRETS_MASTER_KEY_B64")
 	t.Cleanup(func() {
 		_ = os.Setenv("APP_MASTER_KEY_FILE", oldFile)
-		_ = os.Setenv("APP_MASTER_KEY_B64", oldB64)
+		_ = os.Setenv("SECRETS_MASTER_KEY_B64", oldB64)
 	})
 
 	_ = os.Unsetenv("APP_MASTER_KEY_FILE")
-	_ = os.Unsetenv("APP_MASTER_KEY_B64")
+	_ = os.Unsetenv("SECRETS_MASTER_KEY_B64")
 
 	_, err := LoadMasterKey()
 	if err == nil {

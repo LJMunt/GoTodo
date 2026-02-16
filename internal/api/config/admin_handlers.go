@@ -27,7 +27,7 @@ type Translations map[string]string
 type ConfigValues map[string]any
 
 // ListConfigKeysHandler returns all configuration keys and metadata.
-func ListConfigKeysHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListConfigKeysHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -61,7 +61,7 @@ func ListConfigKeysHandler(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GetTranslationsHandler returns all translations for a specific language.
-func GetTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetTranslationsHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		lang := r.URL.Query().Get("lang")
 		if lang == "" {
@@ -97,7 +97,7 @@ func GetTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GetConfigValuesHandler returns all backend JSON config values (non-string keys only).
-func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetConfigValuesHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -132,28 +132,7 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 				continue
 			}
 			if isSecret {
-				// Secrets are stored as encrypted JSON strings; decrypt before returning
-				s, ok := v.(string)
-				if !ok {
-					writeErr(w, http.StatusInternalServerError, "invalid stored secret format")
-					return
-				}
-				mk, err := secrets.LoadMasterKey()
-				if err != nil {
-					writeErr(w, http.StatusInternalServerError, "secrets master key not configured")
-					return
-				}
-				pt, err := secrets.DecryptString(strings.TrimSpace(s), mk, []byte(key))
-				if err != nil {
-					// Fallback for transition: if it's not encrypted (missing prefix), return as is
-					if strings.HasPrefix(err.Error(), "not an encrypted secret") {
-						values[key] = s
-						continue
-					}
-					writeErr(w, http.StatusInternalServerError, "failed to decrypt secret config value")
-					return
-				}
-				values[key] = pt
+				values[key] = ""
 				continue
 			}
 			values[key] = v
