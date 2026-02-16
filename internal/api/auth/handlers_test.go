@@ -228,7 +228,8 @@ func TestLoginHandler_Success(t *testing.T) {
 					*dest[0].(*int64) = 99
 					*dest[1].(*string) = string(hash)
 					*dest[2].(*bool) = true
-					*dest[3].(**time.Time) = &now
+					*dest[3].(*bool) = false
+					*dest[4].(**time.Time) = &now
 					return nil
 				},
 			}
@@ -280,7 +281,8 @@ func TestLoginHandler_UnverifiedEmailBlocked(t *testing.T) {
 					*dest[0].(*int64) = 99
 					*dest[1].(*string) = string(hash)
 					*dest[2].(*bool) = true
-					*dest[3].(**time.Time) = nil
+					*dest[3].(*bool) = false
+					*dest[4].(**time.Time) = nil
 					return nil
 				},
 			}

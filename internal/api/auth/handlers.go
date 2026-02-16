@@ -228,15 +228,16 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			id              int64
 			passwordHash    string
 			isActive        bool
+			isAdmin         bool
 			emailVerifiedAt *time.Time
 		)
 
 		err := db.QueryRow(ctx,
-			`SELECT id, password_hash, is_active, email_verified_at
+			`SELECT id, password_hash, is_active, is_admin, email_verified_at
 			 FROM users
 			 WHERE email=$1`,
 			email,
-		).Scan(&id, &passwordHash, &isActive, &emailVerifiedAt)
+		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt)
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
@@ -254,7 +255,7 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to read email verification setting")
 			return
 		}
-		if requireVerification && emailVerifiedAt == nil {
+		if requireVerification && !isAdmin && emailVerifiedAt == nil {
 			writeJSON(w, http.StatusForbidden, apiError{
 				Error:     "email_not_verified",
 				Message:   "Please verify your email before logging in.",
@@ -353,6 +354,68 @@ func VerifyEmailHandler(db authDB) http.HandlerFunc {
 	}
 }
 
+func ResendVerificationHandler(db authDB) http.HandlerFunc {
+	type resendRequest struct {
+		Email string `json:"email"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req resendRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		email := strings.TrimSpace(strings.ToLower(req.Email))
+		if email == "" {
+			writeErr(w, http.StatusBadRequest, "email is required")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		requireVerification, err := requireEmailVerification(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to read email verification setting")
+			return
+		}
+		if !requireVerification {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		var (
+			userID          int64
+			emailVerifiedAt *time.Time
+		)
+		err = db.QueryRow(ctx, `
+			SELECT id, email_verified_at
+			FROM users
+			WHERE email = $1 AND is_active = true
+		`, email).Scan(&userID, &emailVerifiedAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "failed to look up user")
+			return
+		}
+		if emailVerifiedAt != nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if err := createAndSendVerification(ctx, db, r, userID, email); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to send verification email")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func requireEmailVerification(ctx context.Context, db authDB) (bool, error) {
 	var raw []byte
 	if err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'").Scan(&raw); err != nil {
@@ -407,7 +470,7 @@ func createAndSendVerification(ctx context.Context, db authDB, r *http.Request, 
 		return err
 	}
 
-	verifyURL := strings.TrimRight(instanceURL, "/") + "/api/v1/auth/verify-email?token=" + url.QueryEscape(token)
+	verifyURL := strings.TrimRight(instanceURL, "/") + "/verify-email?token=" + url.QueryEscape(token)
 	data := verificationTemplateData{
 		VerifyURL:   verifyURL,
 		Email:       email,
@@ -426,7 +489,8 @@ func createAndSendVerification(ctx context.Context, db authDB, r *http.Request, 
 	msg := mail.Message{
 		To:      []string{email},
 		Subject: renderedSubject,
-		Text:    renderedBody,
+		Text:    htmlToText(renderedBody),
+		HTML:    renderedBody,
 	}
 
 	return sendMail(ctx, db, msg)
@@ -463,6 +527,34 @@ func extractIP(addr string) net.IP {
 		return net.ParseIP(host)
 	}
 	return net.ParseIP(addr)
+}
+
+func htmlToText(html string) string {
+	if html == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+		"</p>", "\n\n",
+	)
+	normalized := replacer.Replace(html)
+	var b strings.Builder
+	inTag := false
+	for _, r := range normalized {
+		switch r {
+		case '<':
+			inTag = true
+		case '>':
+			inTag = false
+		default:
+			if !inTag {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func PasswordChangeHandler(db authDB) http.HandlerFunc {
