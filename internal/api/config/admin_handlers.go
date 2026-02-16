@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"GoToDo/internal/secrets"
 )
 
 type Key struct {
@@ -100,7 +103,7 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		rows, err := db.Query(ctx, `
-			SELECT key, value_json
+			SELECT key, value_json, is_secret
 			FROM config_keys
 			WHERE value_json IS NOT NULL
 			ORDER BY key ASC
@@ -115,7 +118,8 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var key string
 			var raw any
-			if err := rows.Scan(&key, &raw); err != nil {
+			var isSecret bool
+			if err := rows.Scan(&key, &raw, &isSecret); err != nil {
 				continue
 			}
 			// pgx decodes jsonb into []byte or map depending on settings; marshal/unmarshal for safety
@@ -125,6 +129,31 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 			var v any
 			if uErr := json.Unmarshal(b, &v); uErr != nil {
+				continue
+			}
+			if isSecret {
+				// Secrets are stored as encrypted JSON strings; decrypt before returning
+				s, ok := v.(string)
+				if !ok {
+					writeErr(w, http.StatusInternalServerError, "invalid stored secret format")
+					return
+				}
+				mk, err := secrets.LoadMasterKey()
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, "secrets master key not configured")
+					return
+				}
+				pt, err := secrets.DecryptString(strings.TrimSpace(s), mk, []byte(key))
+				if err != nil {
+					// Fallback for transition: if it's not encrypted (missing prefix), return as is
+					if strings.HasPrefix(err.Error(), "not an encrypted secret") {
+						values[key] = s
+						continue
+					}
+					writeErr(w, http.StatusInternalServerError, "failed to decrypt secret config value")
+					return
+				}
+				values[key] = pt
 				continue
 			}
 			values[key] = v
@@ -223,8 +252,9 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for key, val := range payload {
 			var dataType string
 			var isPublic bool
+			var isSecret bool
 			// Ensure key exists and fetch metadata
-			if err := tx.QueryRow(ctx, `SELECT data_type, is_public FROM config_keys WHERE key = $1`, key).Scan(&dataType, &isPublic); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT data_type, is_public, is_secret FROM config_keys WHERE key = $1`, key).Scan(&dataType, &isPublic, &isSecret); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown config key: %s", key))
 					return
@@ -251,6 +281,30 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			// Marshal value to JSON for storage; if nil (explicit null), set to NULL
 			if val == nil {
 				if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = NULL, updated_at = NOW() WHERE key = $1`, key); err != nil {
+					writeErr(w, http.StatusInternalServerError, "failed to update value")
+					return
+				}
+				continue
+			}
+
+			if isSecret {
+				s, ok := val.(string)
+				if !ok {
+					writeErr(w, http.StatusBadRequest, "secret config value must be a string")
+					return
+				}
+				mk, err := secrets.LoadMasterKey()
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, "secrets master key not configured")
+					return
+				}
+				ct, err := secrets.EncryptString(strings.TrimSpace(s), mk, []byte(key))
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, "failed to encrypt secret config value")
+					return
+				}
+				b, _ := json.Marshal(ct)
+				if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = $2::jsonb, updated_at = NOW() WHERE key = $1`, key, string(b)); err != nil {
 					writeErr(w, http.StatusInternalServerError, "failed to update value")
 					return
 				}
