@@ -49,6 +49,8 @@ func NewRouter(deps app.Deps) chi.Router {
 	// Global rate limit: 100 requests per minute per IP
 	r.Use(httprate.LimitByIP(100, 1*time.Minute))
 
+	r.Use(authmw.ReadOnly(deps.DB))
+
 	// Routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", HealthHandler())

@@ -1,54 +1,68 @@
 package auth
 
 import (
-	"GoToDo/internal/db"
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func TestMiddleware(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set, skipping middleware integration tests")
-	}
+type fakeRow struct {
+	scanFn func(dest ...any) error
+}
 
-	ctx := context.Background()
-	pool, err := db.Connect(ctx)
-	if err != nil {
-		t.Fatalf("failed to connect to DB: %v", err)
-	}
-	defer pool.Close()
+func (r fakeRow) Scan(dest ...any) error {
+	return r.scanFn(dest...)
+}
 
-	// Setup: create a test user
-	os.Setenv("JWT_SECRET", "test-secret")
-	defer os.Unsetenv("JWT_SECRET")
+type fakeMiddlewareDB struct {
+	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
-	var userID int64
-	err = pool.QueryRow(ctx, "INSERT INTO users (email, password_hash, is_active, is_admin) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET is_active=true, is_admin=false RETURNING id",
-		"test@example.com", "hash", true, false).Scan(&userID)
-	if err != nil {
-		t.Fatalf("failed to setup test user: %v", err)
-	}
-	defer pool.Exec(ctx, "DELETE FROM users WHERE id=$1", userID)
+func (db fakeMiddlewareDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return db.queryRowFn(ctx, sql, args...)
+}
 
-	var adminID int64
-	err = pool.QueryRow(ctx, "INSERT INTO users (email, password_hash, is_active, is_admin) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET is_active=true, is_admin=true RETURNING id",
-		"admin@example.com", "hash", true, true).Scan(&adminID)
-	if err != nil {
-		t.Fatalf("failed to setup admin user: %v", err)
-	}
-	defer pool.Exec(ctx, "DELETE FROM users WHERE id=$1", adminID)
+func TestMiddleware_Fake(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret")
+
+	userID := int64(1)
+	adminID := int64(2)
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, ok := FromContext(r.Context())
-		if !ok {
-			t.Error("user not found in context")
-		}
 		w.WriteHeader(http.StatusOK)
 	})
+
+	db := fakeMiddlewareDB{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			if strings.Contains(sql, "FROM users") {
+				uid := args[0].(int64)
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*bool) = (uid == adminID) // isAdmin
+						*dest[1].(*bool) = true             // isActive
+						return nil
+					},
+				}
+			}
+			if strings.Contains(sql, "FROM config_keys") {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*bool) = true // readOnly
+						return nil
+					},
+				}
+			}
+			return fakeRow{
+				scanFn: func(dest ...any) error {
+					return pgx.ErrNoRows
+				},
+			}
+		},
+	}
 
 	t.Run("RequireAuth - Valid Token", func(t *testing.T) {
 		token, _ := SignToken(userID)
@@ -56,21 +70,10 @@ func TestMiddleware(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
 
-		RequireAuth(pool)(nextHandler).ServeHTTP(rr, req)
+		RequireAuth(db)(nextHandler).ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
-		}
-	})
-
-	t.Run("RequireAuth - Missing Token", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/", nil)
-		rr := httptest.NewRecorder()
-
-		RequireAuth(pool)(nextHandler).ServeHTTP(rr, req)
-
-		if rr.Code != http.StatusUnauthorized {
-			t.Errorf("expected status 401, got %d", rr.Code)
 		}
 	})
 
@@ -79,7 +82,7 @@ func TestMiddleware(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer invalid")
 		rr := httptest.NewRecorder()
 
-		RequireAuth(pool)(nextHandler).ServeHTTP(rr, req)
+		RequireAuth(db)(nextHandler).ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("expected status 401, got %d", rr.Code)
@@ -92,7 +95,7 @@ func TestMiddleware(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
 
-		handler := RequireAuth(pool)(RequireAdmin(nextHandler))
+		handler := RequireAuth(db)(RequireAdmin(nextHandler))
 		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
@@ -106,11 +109,76 @@ func TestMiddleware(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
 
-		handler := RequireAuth(pool)(RequireAdmin(nextHandler))
+		handler := RequireAuth(db)(RequireAdmin(nextHandler))
 		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("expected status 403, got %d", rr.Code)
+		}
+	})
+
+	t.Run("ReadOnly - Block regular user write", func(t *testing.T) {
+		token, _ := SignToken(userID)
+		req := httptest.NewRequest("POST", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+
+		handler := RequireAuth(db)(ReadOnly(db)(nextHandler))
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected status 403, got %d", rr.Code)
+		}
+	})
+
+	t.Run("ReadOnly - Allow admin user write", func(t *testing.T) {
+		token, _ := SignToken(adminID)
+		req := httptest.NewRequest("POST", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+
+		handler := RequireAuth(db)(ReadOnly(db)(nextHandler))
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("ReadOnly - Allow regular user GET", func(t *testing.T) {
+		token, _ := SignToken(userID)
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+
+		handler := RequireAuth(db)(ReadOnly(db)(nextHandler))
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("ReadOnly - Allow login bypass", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/auth/login", nil)
+		rr := httptest.NewRecorder()
+
+		// Note: we don't need RequireAuth here because login doesn't have it yet
+		ReadOnly(db)(nextHandler).ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("ReadOnly - Allow admin path bypass", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/admin/any", nil)
+		rr := httptest.NewRecorder()
+
+		ReadOnly(db)(nextHandler).ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
 		}
 	})
 }

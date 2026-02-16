@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 )
 
 type ctxKey struct{}
@@ -53,7 +53,11 @@ func bearerToken(r *http.Request) (string, bool) {
 	return tok, tok != ""
 }
 
-func RequireAuth(db *pgxpool.Pool) func(http.Handler) http.Handler {
+type dbExecutor interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tok, ok := bearerToken(r)
@@ -98,4 +102,56 @@ func RequireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func ReadOnly(db dbExecutor) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			method := r.Method
+			path := r.URL.Path
+
+			// Always allow GET, HEAD, OPTIONS
+			if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Always allow login
+			if method == http.MethodPost && strings.HasSuffix(path, "/auth/login") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Always allow admin endpoints
+			if strings.HasPrefix(path, "/api/v1/admin") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			u, ok := FromContext(r.Context())
+			if ok && u.IsAdmin {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check instance.readOnly in DB
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+
+			var readOnly bool
+			err := db.QueryRow(ctx, `SELECT value_json FROM config_keys WHERE key = 'instance.readOnly'`).Scan(&readOnly)
+			if err != nil {
+				// If we can't find the key, assume false (safe default)
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if readOnly {
+				writeErr(w, http.StatusForbidden, "instance is in read-only mode")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
