@@ -39,14 +39,15 @@ func TestMeHandler_Success(t *testing.T) {
 		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
 			return fakeRow{
 				scanFn: func(dest ...any) error {
-					*dest[0].(*string) = "user@example.com"
-					*dest[1].(*bool) = true
+					*dest[0].(*string) = "usr_public_01"
+					*dest[1].(*string) = "user@example.com"
 					*dest[2].(*bool) = true
-					*dest[3].(**time.Time) = nil
+					*dest[3].(*bool) = true
 					*dest[4].(**time.Time) = nil
-					*dest[5].(*string) = "system"
-					*dest[6].(*bool) = false
-					*dest[7].(*string) = "en"
+					*dest[5].(**time.Time) = nil
+					*dest[6].(*string) = "system"
+					*dest[7].(*bool) = false
+					*dest[8].(*string) = "en"
 					return nil
 				},
 			}
@@ -66,6 +67,9 @@ func TestMeHandler_Success(t *testing.T) {
 	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	if resp["public_id"] != "usr_public_01" {
+		t.Fatalf("unexpected public_id %v", resp["public_id"])
 	}
 	if resp["email"] != "user@example.com" {
 		t.Fatalf("unexpected email %v", resp["email"])
