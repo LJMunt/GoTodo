@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"GoToDo/internal/secrets"
 )
 
 type Key struct {
@@ -24,7 +27,7 @@ type Translations map[string]string
 type ConfigValues map[string]any
 
 // ListConfigKeysHandler returns all configuration keys and metadata.
-func ListConfigKeysHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListConfigKeysHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -58,7 +61,7 @@ func ListConfigKeysHandler(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GetTranslationsHandler returns all translations for a specific language.
-func GetTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetTranslationsHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		lang := r.URL.Query().Get("lang")
 		if lang == "" {
@@ -94,13 +97,13 @@ func GetTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GetConfigValuesHandler returns all backend JSON config values (non-string keys only).
-func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetConfigValuesHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
 		rows, err := db.Query(ctx, `
-			SELECT key, value_json
+			SELECT key, value_json, is_secret
 			FROM config_keys
 			WHERE value_json IS NOT NULL
 			ORDER BY key ASC
@@ -115,7 +118,8 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var key string
 			var raw any
-			if err := rows.Scan(&key, &raw); err != nil {
+			var isSecret bool
+			if err := rows.Scan(&key, &raw, &isSecret); err != nil {
 				continue
 			}
 			// pgx decodes jsonb into []byte or map depending on settings; marshal/unmarshal for safety
@@ -125,6 +129,10 @@ func GetConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 			var v any
 			if uErr := json.Unmarshal(b, &v); uErr != nil {
+				continue
+			}
+			if isSecret {
+				values[key] = ""
 				continue
 			}
 			values[key] = v
@@ -223,8 +231,9 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for key, val := range payload {
 			var dataType string
 			var isPublic bool
+			var isSecret bool
 			// Ensure key exists and fetch metadata
-			if err := tx.QueryRow(ctx, `SELECT data_type, is_public FROM config_keys WHERE key = $1`, key).Scan(&dataType, &isPublic); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT data_type, is_public, is_secret FROM config_keys WHERE key = $1`, key).Scan(&dataType, &isPublic, &isSecret); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown config key: %s", key))
 					return
@@ -251,6 +260,30 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			// Marshal value to JSON for storage; if nil (explicit null), set to NULL
 			if val == nil {
 				if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = NULL, updated_at = NOW() WHERE key = $1`, key); err != nil {
+					writeErr(w, http.StatusInternalServerError, "failed to update value")
+					return
+				}
+				continue
+			}
+
+			if isSecret {
+				s, ok := val.(string)
+				if !ok {
+					writeErr(w, http.StatusBadRequest, "secret config value must be a string")
+					return
+				}
+				mk, err := secrets.LoadMasterKey()
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, "secrets master key not configured")
+					return
+				}
+				ct, err := secrets.EncryptString(strings.TrimSpace(s), mk, []byte(key))
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, "failed to encrypt secret config value")
+					return
+				}
+				b, _ := json.Marshal(ct)
+				if _, err := tx.Exec(ctx, `UPDATE config_keys SET value_json = $2::jsonb, updated_at = NOW() WHERE key = $1`, key, string(b)); err != nil {
 					writeErr(w, http.StatusInternalServerError, "failed to update value")
 					return
 				}

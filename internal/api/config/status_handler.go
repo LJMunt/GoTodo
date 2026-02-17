@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type ConfigStatusResponse struct {
@@ -18,11 +16,7 @@ type ConfigStatusResponse struct {
 	} `json:"instance"`
 }
 
-type configDB interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func GetConfigStatusHandler(db configDB) http.HandlerFunc {
+func GetConfigStatusHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()

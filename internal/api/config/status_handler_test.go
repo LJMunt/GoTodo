@@ -10,42 +10,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type fakeRows struct {
-	pgx.Rows
-	data []map[string]any
-	idx  int
-}
-
-func (r *fakeRows) Next() bool {
-	return r.idx < len(r.data)
-}
-
-func (r *fakeRows) Scan(dest ...any) error {
-	row := r.data[r.idx]
-	*dest[0].(*string) = row["key"].(string)
-	*dest[1].(*string) = row["value_json"].(string)
-	r.idx++
-	return nil
-}
-
-func (r *fakeRows) Close() {}
-
-type fakeConfigDB struct {
-	queryFn func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func (db fakeConfigDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return db.queryFn(ctx, sql, args...)
-}
-
 func TestGetConfigStatusHandler(t *testing.T) {
-	db := fakeConfigDB{
+	db := mockDB{
 		queryFn: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-			return &fakeRows{
-				data: []map[string]any{
-					{"key": "auth.allowSignup", "value_json": "false"},
-					{"key": "auth.requireEmailVerification", "value_json": "true"},
-					{"key": "instance.readOnly", "value_json": "false"},
+			return &mockRows{
+				data: [][]any{
+					{"auth.allowSignup", "false"},
+					{"auth.requireEmailVerification", "true"},
+					{"instance.readOnly", "false"},
 				},
 			}, nil
 		},

@@ -3,12 +3,11 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type apiError struct {
@@ -25,8 +24,13 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiError{Error: msg})
 }
 
+type configQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // GetConfigHandler returns the public configuration as a nested JSON object.
-func GetConfigHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetConfigHandler(db configQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		lang := r.URL.Query().Get("lang")
 		if lang == "" {
@@ -59,7 +63,7 @@ func GetConfigHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx, `
-			SELECT ck.key, ck.data_type, COALESCE(ct.value, ct_def.value, '') as value
+			SELECT ck.key, ck.data_type, COALESCE(ct.value, ct_def.value, '') as value, ck.is_secret
 			FROM config_keys ck
 			LEFT JOIN config_translations ct ON ck.key = ct.key AND ct.language_code = $1
 			LEFT JOIN config_translations ct_def ON ck.key = ct_def.key AND ct_def.language_code = $2
@@ -74,7 +78,12 @@ func GetConfigHandler(db *pgxpool.Pool) http.HandlerFunc {
 		flatConfig := make(map[string]any)
 		for rows.Next() {
 			var key, dataType, val string
-			if err := rows.Scan(&key, &dataType, &val); err != nil {
+			var isSecret bool
+			if err := rows.Scan(&key, &dataType, &val, &isSecret); err != nil {
+				continue
+			}
+			if isSecret {
+				flatConfig[key] = ""
 				continue
 			}
 			flatConfig[key] = castConfigValue(val, dataType)

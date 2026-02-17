@@ -22,12 +22,13 @@ type userSettings struct {
 }
 
 type userMeResponse struct {
-	ID        int64        `json:"id"`
-	Email     string       `json:"email"`
-	IsAdmin   bool         `json:"is_admin"`
-	IsActive  bool         `json:"is_active"`
-	LastLogin *time.Time   `json:"last_login"`
-	Settings  userSettings `json:"settings"`
+	ID              int64        `json:"id"`
+	Email           string       `json:"email"`
+	IsAdmin         bool         `json:"is_admin"`
+	IsActive        bool         `json:"is_active"`
+	LastLogin       *time.Time   `json:"last_login"`
+	EmailVerifiedAt *time.Time   `json:"email_verified_at"`
+	Settings        userSettings `json:"settings"`
 }
 
 type apiError struct {
@@ -62,10 +63,10 @@ func MeHandler(db userDB) http.HandlerFunc {
 
 		var res userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default, language 
+			`SELECT email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
+		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.EmailVerifiedAt, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeErr(w, http.StatusNotFound, "user not found")
@@ -158,10 +159,10 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 		// Fetch and return updated user
 		var updatedRes userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, ui_theme, show_completed_default, language 
+			`SELECT email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
+		).Scan(&updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.EmailVerifiedAt, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch updated user")
 			return
