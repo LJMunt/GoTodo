@@ -10,6 +10,7 @@ import (
 	"time"
 
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -170,6 +171,9 @@ func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Str("name", name).Msg("creating tag")
+
 		var out TagResponse
 		err := db.QueryRow(ctx,
 			`INSERT INTO tags (user_id, name, color)
@@ -180,13 +184,16 @@ func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		if err != nil {
 			if isUniqueViolation(err) {
+				l.Debug().Str("name", name).Msg("tag creation failed: name exists")
 				writeErr(w, http.StatusConflict, "tag already exists")
 				return
 			}
+			l.Error().Err(err).Msg("failed to create tag")
 			writeErr(w, http.StatusInternalServerError, "failed to create tag")
 			return
 		}
 
+		l.Info().Int64("tag_id", out.ID).Msg("tag created successfully")
 		writeJSON(w, http.StatusCreated, out)
 	}
 }
@@ -244,6 +251,9 @@ func RenameTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("tag_id", tagID).Msg("updating tag")
+
 		var out TagResponse
 		var query string
 		var args []any
@@ -261,18 +271,22 @@ func RenameTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		err = db.QueryRow(ctx, query, args...).Scan(&out.ID, &out.Name, &out.Color, &out.CreatedAt, &out.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
+			l.Debug().Int64("tag_id", tagID).Msg("tag not found for update")
 			writeErr(w, http.StatusNotFound, "tag not found")
 			return
 		}
 		if err != nil {
 			if isUniqueViolation(err) {
+				l.Debug().Int64("tag_id", tagID).Msg("tag update failed: name exists")
 				writeErr(w, http.StatusConflict, "tag already exists")
 				return
 			}
+			l.Error().Err(err).Int64("tag_id", tagID).Msg("failed to update tag")
 			writeErr(w, http.StatusInternalServerError, "failed to update tag")
 			return
 		}
 
+		l.Info().Int64("tag_id", tagID).Msg("tag updated successfully")
 		writeJSON(w, http.StatusOK, out)
 	}
 }
@@ -294,19 +308,25 @@ func DeleteTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("tag_id", tagID).Msg("deleting tag")
+
 		tag, err := db.Exec(ctx,
 			`DELETE FROM tags WHERE id = $1 AND user_id = $2`,
 			tagID, user.ID,
 		)
 		if err != nil {
+			l.Error().Err(err).Int64("tag_id", tagID).Msg("failed to delete tag")
 			writeErr(w, http.StatusInternalServerError, "failed to delete tag")
 			return
 		}
 		if tag.RowsAffected() == 0 {
+			l.Debug().Int64("tag_id", tagID).Msg("tag not found for deletion")
 			writeErr(w, http.StatusNotFound, "tag not found")
 			return
 		}
 
+		l.Info().Int64("tag_id", tagID).Msg("tag deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

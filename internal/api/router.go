@@ -18,6 +18,7 @@ import (
 	"GoToDo/internal/api/users"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/go-chi/httprate"
 	"github.com/unrolled/secure"
@@ -41,7 +42,7 @@ func NewRouter(deps app.Deps) chi.Router {
 	})
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	r.Use(logging.RequestLogger(deps.Logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(middleware.CleanPath)

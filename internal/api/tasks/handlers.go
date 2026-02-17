@@ -10,6 +10,7 @@ import (
 
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -85,6 +86,8 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		l := logging.From(r.Context())
+
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
 			writeErr(w, http.StatusBadRequest, "invalid project id")
@@ -100,6 +103,13 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "title is required")
 			return
 		}
+
+		l.Info().
+			Int64("user_id", user.ID).
+			Int64("project_id", projectID).
+			Str("title", req.Title).
+			Bool("recurring", isRecurring(req.RepeatEvery, req.RepeatUnit)).
+			Msg("creating task")
 
 		// recurrence validation
 		if (req.RepeatEvery == nil) != (req.RepeatUnit == nil) {
@@ -218,10 +228,12 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Msg("failed to commit task creation")
 			writeErr(w, http.StatusInternalServerError, "failed to commit task")
 			return
 		}
 
+		l.Info().Int64("task_id", t.ID).Msg("task created")
 		writeJSON(w, http.StatusCreated, t)
 	}
 }
@@ -433,6 +445,9 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
+
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("updating task")
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -670,6 +685,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to commit task update")
 			writeErr(w, http.StatusInternalServerError, "failed to commit task update")
 			return
 		}
@@ -679,6 +695,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, defaultHorizon())
 		}
 
+		l.Info().Int64("task_id", taskID).Msg("task updated successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -700,20 +717,26 @@ func DeleteTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("deleting task")
+
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks SET deleted_at=now(), updated_at=now()
 			 WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
 			taskID, user.ID,
 		)
 		if err != nil {
+			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to delete task")
 			writeErr(w, http.StatusInternalServerError, "failed to delete task")
 			return
 		}
 		if tag.RowsAffected() == 0 {
+			l.Debug().Int64("task_id", taskID).Msg("task not found for deletion")
 			writeErr(w, http.StatusNotFound, "task not found")
 			return
 		}
 
+		l.Info().Int64("task_id", taskID).Msg("task deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -146,6 +147,9 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Ints64("tag_ids", tagIDs).Msg("updating task tags")
+
 		ok, err = taskVisible(ctx, db, user.ID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
@@ -232,10 +236,12 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to commit task tags update")
 			writeErr(w, http.StatusInternalServerError, "failed to commit task tags update")
 			return
 		}
 
+		l.Info().Int64("task_id", taskID).Int("count", len(out)).Msg("task tags updated successfully")
 		writeJSON(w, http.StatusOK, out)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -103,6 +104,7 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
 		if req.Email != nil {
 			email := strings.TrimSpace(strings.ToLower(*req.Email))
 			if email == "" {
@@ -113,12 +115,15 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 			if err != nil {
 				var pgErr *pgconn.PgError
 				if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+					l.Debug().Str("email", email).Msg("user update failed: email already exists")
 					writeErr(w, http.StatusConflict, "email already exists")
 					return
 				}
+				l.Error().Err(err).Int64("user_id", u.ID).Msg("user update failed: database error")
 				writeErr(w, http.StatusInternalServerError, "failed to update email")
 				return
 			}
+			l.Info().Int64("user_id", u.ID).Str("new_email", email).Msg("user email updated")
 		}
 
 		if req.Settings != nil {
@@ -193,6 +198,7 @@ func DeleteMeHandler(db userDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
 		var passwordHash string
 		var isAdmin bool
 		err := db.QueryRow(ctx, "SELECT password_hash, is_admin FROM users WHERE id = $1", u.ID).Scan(&passwordHash, &isAdmin)
@@ -207,16 +213,19 @@ func DeleteMeHandler(db userDB) http.HandlerFunc {
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.CurrentPassword)); err != nil {
+			l.Debug().Int64("user_id", u.ID).Msg("account deletion failed: incorrect password")
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		_, err = db.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
 		if err != nil {
+			l.Error().Err(err).Int64("user_id", u.ID).Msg("account deletion failed: database error")
 			writeErr(w, http.StatusInternalServerError, "failed to delete account")
 			return
 		}
 
+		l.Info().Int64("user_id", u.ID).Msg("user account deleted")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

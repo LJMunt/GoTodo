@@ -15,6 +15,7 @@ import (
 	"time"
 
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 	"GoToDo/internal/mail"
 
 	"github.com/jackc/pgx/v5"
@@ -139,7 +140,12 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "email is required")
 			return
 		}
+
+		l := logging.From(ctx)
+		l.Info().Str("email", email).Msg("user signup attempt")
+
 		if err := validatePassword(req.Password); err != nil {
+			l.Debug().Err(err).Str("email", email).Msg("signup failed: invalid password")
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -177,12 +183,16 @@ func SignupHandler(db authDB) http.HandlerFunc {
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
+				l.Debug().Str("email", email).Msg("signup failed: email already exists")
 				writeErr(w, http.StatusConflict, "email already exists")
 				return
 			}
+			l.Error().Err(err).Str("email", email).Msg("signup failed: database error")
 			writeErr(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
+
+		l.Info().Int64("user_id", id).Str("email", email).Msg("user created successfully")
 
 		resp := userCreatedResponse{
 			ID:                   id,
@@ -224,6 +234,9 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
+		l.Info().Str("email", email).Msg("user login attempt")
+
 		var (
 			id              int64
 			passwordHash    string
@@ -241,11 +254,13 @@ func LoginHandler(db authDB) http.HandlerFunc {
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
+			l.Debug().Str("email", email).Err(err).Msg("login failed: user not found or inactive")
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+			l.Debug().Str("email", email).Msg("login failed: incorrect password")
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
@@ -256,6 +271,7 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			return
 		}
 		if requireVerification && !isAdmin && emailVerifiedAt == nil {
+			l.Debug().Str("email", email).Msg("login failed: email not verified")
 			writeJSON(w, http.StatusForbidden, apiError{
 				Error:     "email_not_verified",
 				Message:   "Please verify your email before logging in.",
@@ -266,6 +282,8 @@ func LoginHandler(db authDB) http.HandlerFunc {
 
 		// Update last_login
 		_, _ = db.Exec(ctx, "UPDATE users SET last_login = now() WHERE id = $1", id)
+
+		l.Info().Int64("user_id", id).Str("email", email).Msg("user login successful")
 
 		token, err := authmw.SignToken(id) // only userID in JWT now
 		if err != nil {
@@ -298,6 +316,7 @@ func VerifyEmailHandler(db authDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
 		tokenHash := hashToken(token)
 		var (
 			tokenID         int64
@@ -335,9 +354,11 @@ func VerifyEmailHandler(db authDB) http.HandlerFunc {
 
 		if emailVerifiedAt == nil {
 			if _, err := db.Exec(ctx, "UPDATE users SET email_verified_at = NOW() WHERE id = $1", userID); err != nil {
+				l.Error().Err(err).Int64("user_id", userID).Msg("failed to verify email")
 				writeErr(w, http.StatusInternalServerError, "failed to verify email")
 				return
 			}
+			l.Info().Int64("user_id", userID).Msg("email verified")
 		}
 		if _, err := db.Exec(ctx, "UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1", tokenID); err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to finalize verification")

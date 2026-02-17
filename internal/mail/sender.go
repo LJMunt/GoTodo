@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"GoToDo/internal/logging"
 	"GoToDo/internal/secrets"
 	"github.com/jackc/pgx/v5"
 )
@@ -73,7 +74,9 @@ func Send(ctx context.Context, db configQuerier, msg Message) error {
 }
 
 func (s *Sender) Send(ctx context.Context, msg Message) error {
+	l := logging.From(ctx)
 	if !s.cfg.Enabled {
+		l.Debug().Msg("mail sending skipped: disabled")
 		return ErrDisabled
 	}
 	if s.cfg.FromAddress == "" {
@@ -86,15 +89,27 @@ func (s *Sender) Send(ctx context.Context, msg Message) error {
 		return errors.New("mail.smtp.port is not configured")
 	}
 
+	l.Info().
+		Strs("to", msg.To).
+		Str("subject", msg.Subject).
+		Msg("sending email")
+
 	payload, err := buildMessage(s.cfg, msg)
 	if err != nil {
+		l.Error().Err(err).Msg("failed to build email message")
 		return err
 	}
 
-	return s.sendSMTP(ctx, msg.To, payload)
+	err = s.sendSMTP(ctx, msg.To, payload)
+	if err != nil {
+		l.Error().Err(err).Msg("failed to send email via smtp")
+		return err
+	}
+	return nil
 }
 
 func (s *Sender) sendSMTP(ctx context.Context, recipients []string, payload []byte) error {
+	l := logging.From(ctx)
 	if len(recipients) == 0 {
 		return errors.New("missing recipients")
 	}
@@ -105,6 +120,11 @@ func (s *Sender) sendSMTP(ctx context.Context, recipients []string, payload []by
 	}
 
 	addr := net.JoinHostPort(s.cfg.SMTP.Host, strconv.Itoa(s.cfg.SMTP.Port))
+	l.Debug().
+		Str("addr", addr).
+		Str("mode", mode).
+		Msg("connecting to smtp server")
+
 	dialer := net.Dialer{Timeout: 10 * time.Second}
 
 	var conn net.Conn
@@ -172,6 +192,7 @@ func (s *Sender) sendSMTP(ctx context.Context, recipients []string, payload []by
 		return err
 	}
 
+	l.Debug().Msg("email sent successfully")
 	return client.Quit()
 }
 

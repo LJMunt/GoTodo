@@ -2,6 +2,7 @@ package projects
 
 import (
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,6 +78,9 @@ func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Str("name", req.Name).Msg("creating project")
+
 		var p ProjectResponse
 		err := db.QueryRow(ctx,
 			`INSERT INTO projects (user_id, name, description)
@@ -88,13 +92,16 @@ func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
 		if err != nil {
 			// Specific error for unique constraint violation
 			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "23505") {
+				l.Debug().Str("name", req.Name).Msg("project creation failed: name exists")
 				writeErr(w, http.StatusConflict, "project with this name already exists")
 				return
 			}
+			l.Error().Err(err).Msg("failed to create project")
 			writeErr(w, http.StatusInternalServerError, "failed to create project")
 			return
 		}
 
+		l.Info().Int64("project_id", p.ID).Msg("project created")
 		writeJSON(w, http.StatusCreated, p)
 	}
 }
@@ -187,6 +194,9 @@ func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 			return
 		}
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("project_id", id).Msg("updating project")
+
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -206,14 +216,17 @@ func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 		)
 
 		if err != nil {
+			l.Error().Err(err).Int64("project_id", id).Msg("failed to update project")
 			writeErr(w, http.StatusInternalServerError, "failed to update project")
 			return
 		}
 		if tag.RowsAffected() == 0 {
+			l.Debug().Int64("project_id", id).Msg("project not found for update")
 			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
 
+		l.Info().Int64("project_id", id).Msg("project updated successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -231,6 +244,9 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
+
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("project_id", id).Msg("deleting project")
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -254,6 +270,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 		if tag.RowsAffected() == 0 {
+			l.Debug().Int64("project_id", id).Msg("project not found for deletion")
 			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
@@ -271,10 +288,12 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("project_id", id).Msg("failed to commit project delete")
 			writeErr(w, http.StatusInternalServerError, "failed to commit project delete")
 			return
 		}
 
+		l.Info().Int64("project_id", id).Msg("project deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
