@@ -83,7 +83,7 @@ components:
         id:
           type: integer
           format: int64
-        public_id:
+        user_id:
           type: string
           description: User public_id.
         project_id:
