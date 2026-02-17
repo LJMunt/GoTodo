@@ -186,7 +186,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
 			recurrenceStartAt, nextDueAt,
 		).Scan(
-			&t.ID, &t.PublicID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -302,7 +302,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TaskResponse
 			if err := rows.Scan(
-				&t.ID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.RecurrenceStartAt, &t.NextDueAt,
@@ -312,7 +312,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				return
 			}
 
-			t.PublicID = userPublicID
+			t.UserID = userPublicID
 
 			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 				recurringTaskIDs = append(recurringTaskIDs, t.ID)
@@ -396,7 +396,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,
 		).Scan(
-			&t.ID, &t.PublicID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
