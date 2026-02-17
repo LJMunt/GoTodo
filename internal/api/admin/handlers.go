@@ -26,6 +26,7 @@ type ProjectResponse struct {
 }
 type UserResponse struct {
 	ID              int64      `json:"id"`
+	PublicID        string     `json:"public_id"`
 	Email           string     `json:"email"`
 	IsAdmin         bool       `json:"is_admin"`
 	IsActive        bool       `json:"is_active"`
@@ -132,7 +133,7 @@ func ListUsersHandler(db userDB) http.HandlerFunc {
 			activeFilter = &a
 		}
 
-		baseQuery := `SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users`
+		baseQuery := `SELECT id, public_id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users`
 		where := make([]string, 0, 2)
 		args := make([]any, 0, 4)
 
@@ -172,7 +173,7 @@ func ListUsersHandler(db userDB) http.HandlerFunc {
 		users := make([]UserResponse, 0, limit)
 		for rows.Next() {
 			var u UserResponse
-			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			if err := rows.Scan(&u.ID, &u.PublicID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 				writeErr(w, "failed to scan user", http.StatusInternalServerError)
 				return
 			}
@@ -202,9 +203,9 @@ func GetUserHandler(db userDB) http.HandlerFunc {
 
 		var u UserResponse
 		err = db.QueryRow(ctx,
-			`SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users WHERE id = $1`,
+			`SELECT id, public_id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users WHERE id = $1`,
 			id,
-		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+		).Scan(&u.ID, &u.PublicID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, "user not found", http.StatusNotFound)
