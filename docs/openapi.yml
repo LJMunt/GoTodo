@@ -34,9 +34,8 @@ components:
     User:
       type: object
       properties:
-        id:
-          type: integer
-          format: int64
+        public_id:
+          type: string
         email:
           type: string
           format: email
@@ -48,7 +47,7 @@ components:
           oneOf: [{type: string, format: date-time}, {type: "null"}]
         email_verified_at:
           oneOf: [{type: string, format: date-time}, {type: "null"}]
-      required: [id, email, is_admin, is_active, last_login, email_verified_at]
+      required: [public_id, email, is_admin, is_active, last_login, email_verified_at]
 
     Project:
       type: object
@@ -75,8 +74,7 @@ components:
           type: integer
           format: int64
         user_id:
-          type: integer
-          format: int64
+          type: string
         project_id:
           type: integer
           format: int64

@@ -15,8 +15,9 @@ type ctxKey struct{}
 var userKey ctxKey
 
 type User struct {
-	ID      int64
-	IsAdmin bool
+	ID       int64
+	PublicID string
+	IsAdmin  bool
 }
 
 type apiError struct {
@@ -77,17 +78,18 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 
 			var isAdmin bool
 			var isActive bool
+			var publicID string
 			err = db.QueryRow(ctx,
-				`SELECT is_admin, is_active FROM users WHERE id=$1`,
+				`SELECT is_admin, is_active, public_id FROM users WHERE id=$1`,
 				claims.UserID,
-			).Scan(&isAdmin, &isActive)
+			).Scan(&isAdmin, &isActive, &publicID)
 
 			if err != nil || !isActive {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
-			user := User{ID: claims.UserID, IsAdmin: isAdmin}
+			user := User{ID: claims.UserID, IsAdmin: isAdmin, PublicID: publicID}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 		})
 	}

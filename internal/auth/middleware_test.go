@@ -44,6 +44,7 @@ func TestMiddleware_Fake(t *testing.T) {
 					scanFn: func(dest ...any) error {
 						*dest[0].(*bool) = (uid == adminID) // isAdmin
 						*dest[1].(*bool) = true             // isActive
+						*dest[2].(*string) = "ULID"         // publicID
 						return nil
 					},
 				}

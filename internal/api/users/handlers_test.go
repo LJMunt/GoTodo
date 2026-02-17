@@ -39,14 +39,15 @@ func TestMeHandler_Success(t *testing.T) {
 		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
 			return fakeRow{
 				scanFn: func(dest ...any) error {
-					*dest[0].(*string) = "user@example.com"
-					*dest[1].(*bool) = true
+					*dest[0].(*string) = "ULID1234567890123456789012"
+					*dest[1].(*string) = "user@example.com"
 					*dest[2].(*bool) = true
-					*dest[3].(**time.Time) = nil
+					*dest[3].(*bool) = true
 					*dest[4].(**time.Time) = nil
-					*dest[5].(*string) = "system"
-					*dest[6].(*bool) = false
-					*dest[7].(*string) = "en"
+					*dest[5].(**time.Time) = nil
+					*dest[6].(*string) = "system"
+					*dest[7].(*bool) = false
+					*dest[8].(*string) = "en"
 					return nil
 				},
 			}
@@ -70,6 +71,9 @@ func TestMeHandler_Success(t *testing.T) {
 	if resp["email"] != "user@example.com" {
 		t.Fatalf("unexpected email %v", resp["email"])
 	}
+	if resp["public_id"] != "ULID1234567890123456789012" {
+		t.Fatalf("unexpected public_id %v", resp["public_id"])
+	}
 	if resp["is_admin"] != true {
 		t.Fatalf("unexpected is_admin %v", resp["is_admin"])
 	}
@@ -78,6 +82,9 @@ func TestMeHandler_Success(t *testing.T) {
 	}
 	if v, ok := resp["email_verified_at"]; !ok || v != nil {
 		t.Fatalf("unexpected email_verified_at %v", v)
+	}
+	if _, ok := resp["id"]; ok {
+		t.Fatal("expected id to be removed from response")
 	}
 }
 

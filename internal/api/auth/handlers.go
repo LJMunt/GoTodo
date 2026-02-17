@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
 	"GoToDo/internal/logging"
 	"GoToDo/internal/mail"
@@ -33,7 +34,7 @@ type authResponse struct {
 }
 
 type userCreatedResponse struct {
-	ID                   int64  `json:"id"`
+	PublicID             string `json:"public_id"`
 	Email                string `json:"email"`
 	Token                string `json:"token,omitempty"`
 	VerificationRequired bool   `json:"verificationRequired"`
@@ -162,21 +163,23 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
+		publicID := app.NewULID()
+
 		ctx, cancel = context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
 		var id int64
 		if requireVerification {
 			err = db.QueryRow(ctx,
-				`INSERT INTO users (email, password_hash) VALUES ($1, $2)
+				`INSERT INTO users (email, password_hash, public_id) VALUES ($1, $2, $3)
 				 RETURNING id`,
-				email, string(hashedPassword),
+				email, string(hashedPassword), publicID,
 			).Scan(&id)
 		} else {
 			err = db.QueryRow(ctx,
-				`INSERT INTO users (email, password_hash, email_verified_at) VALUES ($1, $2, NOW())
+				`INSERT INTO users (email, password_hash, email_verified_at, public_id) VALUES ($1, $2, NOW(), $3)
 				 RETURNING id`,
-				email, string(hashedPassword),
+				email, string(hashedPassword), publicID,
 			).Scan(&id)
 		}
 
@@ -195,7 +198,7 @@ func SignupHandler(db authDB) http.HandlerFunc {
 		l.Info().Int64("user_id", id).Str("email", email).Msg("user created successfully")
 
 		resp := userCreatedResponse{
-			ID:                   id,
+			PublicID:             publicID,
 			Email:                email,
 			VerificationRequired: requireVerification,
 		}

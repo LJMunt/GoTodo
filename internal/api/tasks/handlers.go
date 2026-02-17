@@ -18,11 +18,11 @@ import (
 )
 
 type TaskResponse struct {
-	ID          int64   `json:"id"`
-	UserID      int64   `json:"user_id"`
-	ProjectID   int64   `json:"project_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description,omitempty"`
+	ID           int64   `json:"id"`
+	UserPublicID string  `json:"user_id"`
+	ProjectID    int64   `json:"project_id"`
+	Title        string  `json:"title"`
+	Description  *string `json:"description,omitempty"`
 
 	// DueAt semantics:
 	// - non-recurring: tasks.due_at
@@ -174,6 +174,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
+		var userID int64
 		err = tx.QueryRow(ctx,
 			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -186,7 +187,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
 			recurrenceStartAt, nextDueAt,
 		).Scan(
-			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -196,6 +197,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to create task")
 			return
 		}
+		t.UserPublicID = user.PublicID
 
 		// If recurring, ensure the first occurrence exists (history basis)
 		if recurring {
@@ -294,8 +296,9 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		for rows.Next() {
 			var t TaskResponse
+			var userID int64
 			if err := rows.Scan(
-				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.RecurrenceStartAt, &t.NextDueAt,
@@ -304,6 +307,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
 				return
 			}
+			t.UserPublicID = user.PublicID
 
 			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 				recurringTaskIDs = append(recurringTaskIDs, t.ID)
@@ -375,6 +379,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		var t TaskResponse
+		var userID int64
 		err = db.QueryRow(ctx,
 			`SELECT t.id, t.user_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
@@ -386,7 +391,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,
 		).Scan(
-			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -401,6 +406,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
 			return
 		}
+		t.UserPublicID = user.PublicID
 
 		if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, t.ID, defaultHorizon()) // best-effort

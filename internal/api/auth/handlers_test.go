@@ -92,8 +92,11 @@ func TestSignupHandler_Success(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.ID != 42 {
-		t.Fatalf("expected id 42, got %d", resp.ID)
+	if resp.PublicID == "" {
+		t.Fatal("expected public_id to be set")
+	}
+	if len(resp.PublicID) != 26 {
+		t.Fatalf("expected public_id length 26, got %d", len(resp.PublicID))
 	}
 	if resp.Email != "test@email.com" {
 		t.Fatalf("expected email normalized, got %q", resp.Email)
