@@ -43,8 +43,10 @@ func TestMeHandler_Success(t *testing.T) {
 					*dest[1].(*bool) = true
 					*dest[2].(*bool) = true
 					*dest[3].(**time.Time) = nil
-					*dest[4].(*string) = "system"
-					*dest[5].(*bool) = false
+					*dest[4].(**time.Time) = nil
+					*dest[5].(*string) = "system"
+					*dest[6].(*bool) = false
+					*dest[7].(*string) = "en"
 					return nil
 				},
 			}
@@ -73,6 +75,9 @@ func TestMeHandler_Success(t *testing.T) {
 	}
 	if resp["is_active"] != true {
 		t.Fatalf("unexpected is_active %v", resp["is_active"])
+	}
+	if v, ok := resp["email_verified_at"]; !ok || v != nil {
+		t.Fatalf("unexpected email_verified_at %v", v)
 	}
 }
 

@@ -161,6 +161,9 @@ components:
         last_login:
           oneOf: [{type: string}, {type: "null"}]
           format: date-time
+        email_verified_at:
+          oneOf: [{type: string}, {type: "null"}]
+          format: date-time
         settings:
           type: object
           properties:
