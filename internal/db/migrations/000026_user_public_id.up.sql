@@ -1,0 +1,2 @@
+ALTER TABLE users
+    ADD COLUMN public_id CHAR(26) UNIQUE;
