@@ -71,6 +71,23 @@ func defaultHorizon() time.Time {
 	return time.Now().UTC().AddDate(0, 0, 60)
 }
 
+func ensureTaskPublicID(ctx context.Context, db *pgxpool.Pool, userID, taskID int64, current string) string {
+	if current != "" {
+		return current
+	}
+	newID := app.NewULID()
+	_, err := db.Exec(ctx,
+		`UPDATE tasks
+		 SET public_id=$1, updated_at=now()
+		 WHERE id=$2 AND user_id=$3 AND public_id IS NULL`,
+		newID, taskID, userID,
+	)
+	if err != nil {
+		return current
+	}
+	return newID
+}
+
 func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type request struct {
 		Title       string     `json:"title"`
@@ -176,14 +193,14 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		err = tx.QueryRow(ctx,
-			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			`INSERT INTO tasks (public_id, user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 			 RETURNING id, public_id, (SELECT public_id FROM users WHERE id = tasks.user_id) AS user_id, project_id, title, description,
 			           due_at, completed_at, deleted_at,
 			           repeat_every, repeat_unit,
 			           recurrence_start_at, next_due_at,
 			           created_at, updated_at`,
-			user.ID, projectID, req.Title, req.Description,
+			app.NewULID(), user.ID, projectID, req.Title, req.Description,
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
 			recurrenceStartAt, nextDueAt,
 		).Scan(
@@ -274,7 +291,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx,
-			`SELECT t.id, t.public_id, u.public_id, t.project_id, t.title, t.description,
+			`SELECT t.id, COALESCE(t.public_id, ''), u.public_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at,
@@ -306,6 +323,8 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
 				return
 			}
+
+			t.PublicID = ensureTaskPublicID(ctx, db, user.ID, t.ID, t.PublicID)
 
 			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 				recurringTaskIDs = append(recurringTaskIDs, t.ID)
@@ -378,7 +397,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var t TaskResponse
 		err = db.QueryRow(ctx,
-			`SELECT t.id, t.public_id, u.public_id, t.project_id, t.title, t.description,
+			`SELECT t.id, COALESCE(t.public_id, ''), u.public_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at,
@@ -404,6 +423,8 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
 			return
 		}
+
+		t.PublicID = ensureTaskPublicID(ctx, db, user.ID, t.ID, t.PublicID)
 
 		if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, t.ID, defaultHorizon()) // best-effort

@@ -81,8 +81,8 @@ components:
       type: object
       properties:
         id:
-          type: integer
-          format: int64
+          type: string
+          description: Task public_id (ULID).
         user_id:
           type: string
           description: User public_id.
@@ -119,7 +119,7 @@ components:
         updated_at:
           type: string
           format: date-time
-      required: [id, public_id, project_id, title, created_at, updated_at]
+      required: [id, project_id, title, created_at, updated_at]
 
     Tag:
       type: object
