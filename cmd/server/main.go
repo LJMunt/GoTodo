@@ -6,12 +6,13 @@ import (
 	"GoToDo/internal/db"
 	"GoToDo/internal/logging"
 	"context"
-	"github.com/rs/zerolog/log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -46,6 +47,9 @@ func main() {
 
 	// Start level refresher
 	logging.StartLevelRefresher(ctx, logger, &logging.DBLevelSource{Pool: pool}, 5*time.Second)
+
+	// Start configuration sanity checker (checks every 1 minute)
+	logging.StartConfigWatcher(ctx, logger, pool, 1*time.Minute)
 
 	r := api.NewRouter(app.Deps{DB: pool, Logger: logger})
 
