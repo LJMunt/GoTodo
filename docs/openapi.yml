@@ -49,6 +49,33 @@ components:
           oneOf: [{type: string, format: date-time}, {type: "null"}]
       required: [public_id, email, is_admin, is_active, last_login, email_verified_at]
 
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        public_id:
+          type: string
+        email:
+          type: string
+          format: email
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+        last_login:
+          oneOf: [{type: string, format: date-time}, {type: "null"}]
+        email_verified_at:
+          oneOf: [{type: string, format: date-time}, {type: "null"}]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, public_id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at]
+
     Project:
       type: object
       properties:
@@ -143,12 +170,27 @@ components:
           format: date-time
       required: [ id, name, color, created_at, updated_at ]
 
-    UserMe:
+    AdminTag:
       type: object
       properties:
         id:
           type: integer
           format: int64
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [ id, name, created_at, updated_at ]
+
+    UserMe:
+      type: object
+      properties:
+        public_id:
+          type: string
         email:
           type: string
           format: email
@@ -173,7 +215,7 @@ components:
             language:
               type: string
           required: [theme, showCompletedDefault, language]
-      required: [id, email, is_admin, is_active, last_login, settings]
+      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings]
 
     Occurrence:
       type: object
@@ -486,16 +528,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:
-                    type: integer
-                    format: int64
+                  public_id:
+                    type: string
                   email:
                     type: string
                   token:
                     type: string
                   verificationRequired:
                     type: boolean
-                required: [id, email, verificationRequired]
+                required: [public_id, email, verificationRequired]
         "400":
           description: Invalid request
           content:
@@ -696,7 +737,6 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: false
               properties:
                 currentPassword:
                   type: string
@@ -741,7 +781,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                $ref: '#/components/schemas/UserMe'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":
@@ -764,14 +804,12 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: false
               properties:
                 email:
                   type: string
                   format: email
                 settings:
                   type: object
-                  additionalProperties: false
                   properties:
                     theme:
                       type: string
@@ -783,9 +821,6 @@ paths:
                     language:
                       type: string
                       description: User's preferred language code (e.g., 'en', 'fr').
-              anyOf:
-                - required: [ email ]
-                - required: [ settings ]
       responses:
         "200":
           description: User updated
@@ -1550,7 +1585,6 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: false
               properties:
                 name:
                   type: string
@@ -1922,7 +1956,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/User'
+                  $ref: '#/components/schemas/AdminUser'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
@@ -1947,7 +1981,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                $ref: '#/components/schemas/AdminUser'
         "400":
           description: Invalid ID
           content:
@@ -1990,6 +2024,10 @@ paths:
                   type: boolean
                 password:
                   type: string
+              anyOf:
+                - required: [ is_admin ]
+                - required: [ is_active ]
+                - required: [ password ]
       responses:
         "204":
           description: User updated
@@ -2554,7 +2592,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Tag'
+                  $ref: '#/components/schemas/AdminTag'
         "400":
           description: Invalid ID
           content:
