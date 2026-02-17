@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -24,13 +25,14 @@ type ProjectResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 type UserResponse struct {
-	ID        int64      `json:"id"`
-	Email     string     `json:"email"`
-	IsAdmin   bool       `json:"is_admin"`
-	IsActive  bool       `json:"is_active"`
-	LastLogin *time.Time `json:"last_login"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID              int64      `json:"id"`
+	Email           string     `json:"email"`
+	IsAdmin         bool       `json:"is_admin"`
+	IsActive        bool       `json:"is_active"`
+	LastLogin       *time.Time `json:"last_login"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type TaskResponse struct {
@@ -83,7 +85,13 @@ func parseInt64Param(r *http.Request, key string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
-func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
+type userDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func ListUsersHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
 		activeStr := strings.TrimSpace(r.URL.Query().Get("active"))
@@ -124,7 +132,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 			activeFilter = &a
 		}
 
-		baseQuery := `SELECT id, email, is_admin, is_active, last_login, created_at, updated_at FROM users`
+		baseQuery := `SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users`
 		where := make([]string, 0, 2)
 		args := make([]any, 0, 4)
 
@@ -164,7 +172,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 		users := make([]UserResponse, 0, limit)
 		for rows.Next() {
 			var u UserResponse
-			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 				writeErr(w, "failed to scan user", http.StatusInternalServerError)
 				return
 			}
@@ -180,7 +188,7 @@ func ListUsersHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetUserHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
 		id, err := strconv.ParseInt(idStr, 10, 64)
@@ -194,9 +202,9 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var u UserResponse
 		err = db.QueryRow(ctx,
-			`SELECT id, email, is_admin, is_active, last_login, created_at, updated_at FROM users WHERE id = $1`,
+			`SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users WHERE id = $1`,
 			id,
-		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
+		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, "user not found", http.StatusNotFound)
@@ -212,7 +220,7 @@ func GetUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateUserHandler(db userDB) http.HandlerFunc {
 	type updateRequest struct {
 		IsAdmin  *bool   `json:"is_admin"`
 		IsActive *bool   `json:"is_active"`
@@ -297,7 +305,7 @@ func UpdateUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteUserHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteUserHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
 		id, err := strconv.ParseInt(idStr, 10, 64)
@@ -312,6 +320,84 @@ func DeleteUserHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := db.Exec(ctx, "UPDATE users SET is_active=false, updated_at=now() WHERE id=$1;", id)
 		if err != nil {
 			writeErr(w, "failed to delete user", http.StatusInternalServerError)
+			return
+		}
+
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func GetUserEmailVerificationHandler(db userDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var verifiedAt *time.Time
+		err = db.QueryRow(ctx, "SELECT email_verified_at FROM users WHERE id = $1", id).Scan(&verifiedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			writeErr(w, "failed to fetch email verification status", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"email_verified_at": verifiedAt})
+	}
+}
+
+func VerifyUserEmailHandler(db userDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "UPDATE users SET email_verified_at = now(), updated_at = now() WHERE id = $1", id)
+		if err != nil {
+			writeErr(w, "failed to verify email", http.StatusInternalServerError)
+			return
+		}
+
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func UnverifyUserEmailHandler(db userDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "UPDATE users SET email_verified_at = NULL, updated_at = now() WHERE id = $1", id)
+		if err != nil {
+			writeErr(w, "failed to unverify email", http.StatusInternalServerError)
 			return
 		}
 

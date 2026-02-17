@@ -45,8 +45,10 @@ components:
         is_active:
           type: boolean
         last_login:
-          type: string
-      required: [id, email, is_admin, is_active, last_login]
+          oneOf: [{type: string, format: date-time}, {type: "null"}]
+        email_verified_at:
+          oneOf: [{type: string, format: date-time}, {type: "null"}]
+      required: [id, email, is_admin, is_active, last_login, email_verified_at]
 
     Project:
       type: object
@@ -2025,6 +2027,124 @@ paths:
           description: User deleted
         "400":
           description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{id}/email-verification:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Admin]
+      summary: Get user email verification status (Admin only)
+      responses:
+        "200":
+          description: Email verification status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email_verified_at:
+                    oneOf: [{type: string, format: date-time}, {type: "null"}]
+        "400":
+          description: Invalid user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{id}/verify-email:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Admin]
+      summary: Verify user email (Admin only)
+      responses:
+        "204":
+          description: Email verified successfully
+        "400":
+          description: Invalid user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{id}/unverify-email:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Admin]
+      summary: Unverify user email (Admin only)
+      responses:
+        "204":
+          description: Email unverified successfully
+        "400":
+          description: Invalid user ID
           content:
             application/json:
               schema:
