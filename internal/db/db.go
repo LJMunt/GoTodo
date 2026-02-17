@@ -10,6 +10,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 )
 
 func Migrate(dsn string, migrationsPath string) error {
@@ -83,6 +84,11 @@ func Connect(ctx context.Context) (*pgxpool.Pool, error) {
 
 		// Wait before retrying (unless this was the last attempt)
 		if attempt < maxAttempts {
+			log.Debug().
+				Int("attempt", attempt).
+				Int("max_attempts", maxAttempts).
+				Err(lastErr).
+				Msg("database not ready, retrying...")
 			time.Sleep(delay)
 		}
 	}

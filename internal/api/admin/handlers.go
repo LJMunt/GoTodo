@@ -26,6 +26,7 @@ type ProjectResponse struct {
 }
 type UserResponse struct {
 	ID              int64      `json:"id"`
+	PublicID        string     `json:"public_id"`
 	Email           string     `json:"email"`
 	IsAdmin         bool       `json:"is_admin"`
 	IsActive        bool       `json:"is_active"`
@@ -36,18 +37,18 @@ type UserResponse struct {
 }
 
 type TaskResponse struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	ProjectID   int64      `json:"project_id"`
-	Title       string     `json:"title"`
-	Description *string    `json:"description,omitempty"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
-	RepeatEvery *int       `json:"repeat_every,omitempty"`
-	RepeatUnit  *string    `json:"repeat_unit,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           int64      `json:"id"`
+	UserPublicID string     `json:"user_id"`
+	ProjectID    int64      `json:"project_id"`
+	Title        string     `json:"title"`
+	Description  *string    `json:"description,omitempty"`
+	DueAt        *time.Time `json:"due_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	RepeatEvery  *int       `json:"repeat_every,omitempty"`
+	RepeatUnit   *string    `json:"repeat_unit,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type TagResponse struct {
@@ -132,7 +133,7 @@ func ListUsersHandler(db userDB) http.HandlerFunc {
 			activeFilter = &a
 		}
 
-		baseQuery := `SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users`
+		baseQuery := `SELECT id, public_id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users`
 		where := make([]string, 0, 2)
 		args := make([]any, 0, 4)
 
@@ -172,7 +173,7 @@ func ListUsersHandler(db userDB) http.HandlerFunc {
 		users := make([]UserResponse, 0, limit)
 		for rows.Next() {
 			var u UserResponse
-			if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			if err := rows.Scan(&u.ID, &u.PublicID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 				writeErr(w, "failed to scan user", http.StatusInternalServerError)
 				return
 			}
@@ -202,9 +203,9 @@ func GetUserHandler(db userDB) http.HandlerFunc {
 
 		var u UserResponse
 		err = db.QueryRow(ctx,
-			`SELECT id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users WHERE id = $1`,
+			`SELECT id, public_id, email, is_admin, is_active, last_login, email_verified_at, created_at, updated_at FROM users WHERE id = $1`,
 			id,
-		).Scan(&u.ID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+		).Scan(&u.ID, &u.PublicID, &u.Email, &u.IsAdmin, &u.IsActive, &u.LastLogin, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, "user not found", http.StatusNotFound)
@@ -762,10 +763,11 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// Join projects so we can optionally filter on project deleted_at too.
 		query := `
-			SELECT t.id, t.user_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			SELECT t.id, u.public_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
 			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
+			JOIN users u ON u.id = t.user_id
 			WHERE t.user_id = $1
 		`
 
@@ -788,7 +790,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TaskResponse
 			if err := rows.Scan(
-				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &t.UserPublicID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
@@ -844,10 +846,11 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		query := `
-			SELECT t.id, t.user_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			SELECT t.id, u.public_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
 			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
+			JOIN users u ON u.id = t.user_id
 			WHERE t.user_id = $1 AND t.project_id = $2
 		`
 		if !includeDeleted {
@@ -868,7 +871,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TaskResponse
 			if err := rows.Scan(
-				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &t.UserPublicID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,

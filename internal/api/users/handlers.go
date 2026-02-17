@@ -9,6 +9,7 @@ import (
 	"time"
 
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,7 +23,7 @@ type userSettings struct {
 }
 
 type userMeResponse struct {
-	ID              int64        `json:"id"`
+	PublicID        string       `json:"public_id"`
 	Email           string       `json:"email"`
 	IsAdmin         bool         `json:"is_admin"`
 	IsActive        bool         `json:"is_active"`
@@ -63,10 +64,10 @@ func MeHandler(db userDB) http.HandlerFunc {
 
 		var res userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
+			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.EmailVerifiedAt, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
+		).Scan(&res.PublicID, &res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.EmailVerifiedAt, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeErr(w, http.StatusNotFound, "user not found")
@@ -75,7 +76,6 @@ func MeHandler(db userDB) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch user")
 			return
 		}
-		res.ID = u.ID
 
 		writeJSON(w, http.StatusOK, res)
 	}
@@ -103,6 +103,7 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
 		if req.Email != nil {
 			email := strings.TrimSpace(strings.ToLower(*req.Email))
 			if email == "" {
@@ -113,12 +114,15 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 			if err != nil {
 				var pgErr *pgconn.PgError
 				if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+					l.Debug().Str("email", email).Msg("user update failed: email already exists")
 					writeErr(w, http.StatusConflict, "email already exists")
 					return
 				}
+				l.Error().Err(err).Int64("user_id", u.ID).Msg("user update failed: database error")
 				writeErr(w, http.StatusInternalServerError, "failed to update email")
 				return
 			}
+			l.Info().Int64("user_id", u.ID).Str("new_email", email).Msg("user email updated")
 		}
 
 		if req.Settings != nil {
@@ -159,15 +163,14 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 		// Fetch and return updated user
 		var updatedRes userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
+			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.EmailVerifiedAt, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
+		).Scan(&updatedRes.PublicID, &updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.EmailVerifiedAt, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch updated user")
 			return
 		}
-		updatedRes.ID = u.ID
 		writeJSON(w, http.StatusOK, updatedRes)
 	}
 }
@@ -193,6 +196,7 @@ func DeleteMeHandler(db userDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(ctx)
 		var passwordHash string
 		var isAdmin bool
 		err := db.QueryRow(ctx, "SELECT password_hash, is_admin FROM users WHERE id = $1", u.ID).Scan(&passwordHash, &isAdmin)
@@ -207,16 +211,19 @@ func DeleteMeHandler(db userDB) http.HandlerFunc {
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.CurrentPassword)); err != nil {
+			l.Debug().Int64("user_id", u.ID).Msg("account deletion failed: incorrect password")
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		_, err = db.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
 		if err != nil {
+			l.Error().Err(err).Int64("user_id", u.ID).Msg("account deletion failed: database error")
 			writeErr(w, http.StatusInternalServerError, "failed to delete account")
 			return
 		}
 
+		l.Info().Int64("user_id", u.ID).Msg("user account deleted")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

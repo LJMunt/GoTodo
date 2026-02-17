@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"GoToDo/internal/logging"
 	"GoToDo/internal/secrets"
 )
 
@@ -160,6 +161,9 @@ func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Str("lang", lang).Int("count", len(translations)).Msg("updating translations")
+
 		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
@@ -182,10 +186,12 @@ func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Str("lang", lang).Msg("failed to commit translations update")
 			writeErr(w, http.StatusInternalServerError, "failed to commit transaction")
 			return
 		}
 
+		l.Info().Str("lang", lang).Msg("translations updated successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -205,6 +211,9 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
+
+		l := logging.From(r.Context())
+		l.Info().Int("count", len(payload)).Msg("bulk configuration update initiated")
 
 		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
@@ -302,10 +311,12 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Msg("failed to commit configuration update")
 			writeErr(w, http.StatusInternalServerError, "failed to commit transaction")
 			return
 		}
 
+		l.Info().Int("keys_updated", len(payload)).Msg("bulk configuration update successful")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

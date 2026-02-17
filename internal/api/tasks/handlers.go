@@ -10,6 +10,7 @@ import (
 
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -17,11 +18,11 @@ import (
 )
 
 type TaskResponse struct {
-	ID          int64   `json:"id"`
-	UserID      int64   `json:"user_id"`
-	ProjectID   int64   `json:"project_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description,omitempty"`
+	ID           int64   `json:"id"`
+	UserPublicID string  `json:"user_id"`
+	ProjectID    int64   `json:"project_id"`
+	Title        string  `json:"title"`
+	Description  *string `json:"description,omitempty"`
 
 	// DueAt semantics:
 	// - non-recurring: tasks.due_at
@@ -85,6 +86,8 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		l := logging.From(r.Context())
+
 		projectID, err := parseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
 			writeErr(w, http.StatusBadRequest, "invalid project id")
@@ -100,6 +103,13 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "title is required")
 			return
 		}
+
+		l.Info().
+			Int64("user_id", user.ID).
+			Int64("project_id", projectID).
+			Str("title", req.Title).
+			Bool("recurring", isRecurring(req.RepeatEvery, req.RepeatUnit)).
+			Msg("creating task")
 
 		// recurrence validation
 		if (req.RepeatEvery == nil) != (req.RepeatUnit == nil) {
@@ -164,6 +174,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
+		var userID int64
 		err = tx.QueryRow(ctx,
 			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -176,7 +187,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
 			recurrenceStartAt, nextDueAt,
 		).Scan(
-			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -186,6 +197,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to create task")
 			return
 		}
+		t.UserPublicID = user.PublicID
 
 		// If recurring, ensure the first occurrence exists (history basis)
 		if recurring {
@@ -218,10 +230,12 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Msg("failed to commit task creation")
 			writeErr(w, http.StatusInternalServerError, "failed to commit task")
 			return
 		}
 
+		l.Info().Int64("task_id", t.ID).Msg("task created")
 		writeJSON(w, http.StatusCreated, t)
 	}
 }
@@ -282,8 +296,9 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		for rows.Next() {
 			var t TaskResponse
+			var userID int64
 			if err := rows.Scan(
-				&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.RecurrenceStartAt, &t.NextDueAt,
@@ -292,6 +307,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
 				return
 			}
+			t.UserPublicID = user.PublicID
 
 			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 				recurringTaskIDs = append(recurringTaskIDs, t.ID)
@@ -363,6 +379,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		var t TaskResponse
+		var userID int64
 		err = db.QueryRow(ctx,
 			`SELECT t.id, t.user_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
@@ -374,7 +391,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,
 		).Scan(
-			&t.ID, &t.UserID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -389,6 +406,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
 			return
 		}
+		t.UserPublicID = user.PublicID
 
 		if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, t.ID, defaultHorizon()) // best-effort
@@ -433,6 +451,9 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
+
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("updating task")
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -670,6 +691,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to commit task update")
 			writeErr(w, http.StatusInternalServerError, "failed to commit task update")
 			return
 		}
@@ -679,6 +701,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, defaultHorizon())
 		}
 
+		l.Info().Int64("task_id", taskID).Msg("task updated successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -700,20 +723,26 @@ func DeleteTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		l := logging.From(r.Context())
+		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("deleting task")
+
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks SET deleted_at=now(), updated_at=now()
 			 WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
 			taskID, user.ID,
 		)
 		if err != nil {
+			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to delete task")
 			writeErr(w, http.StatusInternalServerError, "failed to delete task")
 			return
 		}
 		if tag.RowsAffected() == 0 {
+			l.Debug().Int64("task_id", taskID).Msg("task not found for deletion")
 			writeErr(w, http.StatusNotFound, "task not found")
 			return
 		}
 
+		l.Info().Int64("task_id", taskID).Msg("task deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

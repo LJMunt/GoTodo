@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"GoToDo/internal/logging"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -26,6 +28,9 @@ type Occurrence struct {
 // EnsureOccurrencesUpTo generates missing occurrences for a recurring task up to `to` (inclusive).
 // Safe to call repeatedly. Uses ON CONFLICT DO NOTHING.
 func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, to time.Time) error {
+	l := logging.From(ctx)
+	l.Debug().Int64("user_id", userID).Int64("task_id", taskID).Time("to", to).Msg("ensuring task occurrences")
+
 	var every *int
 	var unit *string
 	var startAt *time.Time
@@ -87,6 +92,7 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 		next = n
 	}
 	to = to.UTC()
+	count := 0
 	for !next.After(to) {
 		_, err := db.Exec(ctx,
 			`INSERT INTO task_occurrences (user_id, task_id, due_at)
@@ -97,12 +103,17 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 		if err != nil {
 			return err
 		}
+		count++
 
 		n, err := step(next)
 		if err != nil {
 			return err
 		}
 		next = n
+	}
+
+	if count > 0 {
+		l.Debug().Int("generated", count).Msg("task occurrences generated")
 	}
 
 	now := time.Now().UTC()
