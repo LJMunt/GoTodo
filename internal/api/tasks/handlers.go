@@ -280,14 +280,14 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(ctx,
 			`SELECT t.id, u.public_id, t.project_id, t.title, t.description,
-			        due_at, completed_at, deleted_at,
-			        repeat_every, repeat_unit,
-			        recurrence_start_at, next_due_at,
-			        created_at, updated_at
+			        t.due_at, t.completed_at, t.deleted_at,
+			        t.repeat_every, t.repeat_unit,
+			        t.recurrence_start_at, t.next_due_at,
+			        t.created_at, t.updated_at
 			 FROM tasks t
 			 JOIN users u ON u.id = t.user_id
 			 WHERE t.user_id=$1 AND t.project_id=$2 AND t.deleted_at IS NULL
-			 ORDER BY id`,
+			 ORDER BY t.id`,
 			user.ID, projectID,
 		)
 		if err != nil {
