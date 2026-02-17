@@ -19,7 +19,7 @@ import (
 
 type TaskResponse struct {
 	ID          int64   `json:"id"`
-	UserID      int64   `json:"user_id"`
+	UserID      string  `json:"user_id"`
 	ProjectID   int64   `json:"project_id"`
 	Title       string  `json:"title"`
 	Description *string `json:"description,omitempty"`
@@ -177,7 +177,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		err = tx.QueryRow(ctx,
 			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			 RETURNING id, user_id, project_id, title, description,
+			 RETURNING id, (SELECT public_id FROM users WHERE id = tasks.user_id) AS user_id, project_id, title, description,
 			           due_at, completed_at, deleted_at,
 			           repeat_every, repeat_unit,
 			           recurrence_start_at, next_due_at,
@@ -273,14 +273,15 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx,
-			`SELECT id, user_id, project_id, title, description,
-			        due_at, completed_at, deleted_at,
-			        repeat_every, repeat_unit,
-			        recurrence_start_at, next_due_at,
-			        created_at, updated_at
-			 FROM tasks
-			 WHERE user_id=$1 AND project_id=$2 AND deleted_at IS NULL
-			 ORDER BY id`,
+			`SELECT t.id, u.public_id, t.project_id, t.title, t.description,
+			        t.due_at, t.completed_at, t.deleted_at,
+			        t.repeat_every, t.repeat_unit,
+			        t.recurrence_start_at, t.next_due_at,
+			        t.created_at, t.updated_at
+			 FROM tasks t
+			 JOIN users u ON u.id = t.user_id
+			 WHERE t.user_id=$1 AND t.project_id=$2 AND t.deleted_at IS NULL
+			 ORDER BY t.id`,
 			user.ID, projectID,
 		)
 		if err != nil {
@@ -376,12 +377,13 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var t TaskResponse
 		err = db.QueryRow(ctx,
-			`SELECT t.id, t.user_id, t.project_id, t.title, t.description,
+			`SELECT t.id, u.public_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at,
 			        t.created_at, t.updated_at
 			 FROM tasks t
+			 JOIN users u ON u.id = t.user_id
 			 JOIN projects p ON p.id = t.project_id
 			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,
@@ -507,6 +509,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at
 			 FROM tasks t
+			 JOIN users u ON u.id = t.user_id
 			 JOIN projects p ON p.id = t.project_id
 			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.ID,

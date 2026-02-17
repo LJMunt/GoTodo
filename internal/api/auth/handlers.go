@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"GoToDo/internal/app"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -165,18 +166,20 @@ func SignupHandler(db authDB) http.HandlerFunc {
 		ctx, cancel = context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		publicID := app.NewULID()
+
 		var id int64
 		if requireVerification {
 			err = db.QueryRow(ctx,
-				`INSERT INTO users (email, password_hash) VALUES ($1, $2)
+				`INSERT INTO users (public_id, email, password_hash) VALUES ($1, $2, $3)
 				 RETURNING id`,
-				email, string(hashedPassword),
+				publicID, email, string(hashedPassword),
 			).Scan(&id)
 		} else {
 			err = db.QueryRow(ctx,
-				`INSERT INTO users (email, password_hash, email_verified_at) VALUES ($1, $2, NOW())
+				`INSERT INTO users (public_id, email, password_hash, email_verified_at) VALUES ($1, $2, $3, NOW())
 				 RETURNING id`,
-				email, string(hashedPassword),
+				publicID, email, string(hashedPassword),
 			).Scan(&id)
 		}
 
