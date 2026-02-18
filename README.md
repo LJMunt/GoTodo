@@ -143,6 +143,46 @@ docker-compose exec app ./restore-languages
 go run ./cmd/restore-languages
 ```
 
+#### Promoting a User to Admin
+Use the promotion tool to grant admin access by email. It will ask for a confirmation code.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./promote-admin user@example.com
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/promote-admin user@example.com
+```
+
+#### Demoting an Admin User
+Use the demotion tool to remove admin access by email. It will ask for a confirmation code.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./demote-admin user@example.com
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/demote-admin user@example.com
+```
+
+#### Resetting an Instance (Dangerous)
+Factory reset: drops the public schema, recreates it, and re-runs migrations. This permanently deletes all data.
+It requires an interactive confirmation phrase plus a random code.
+
+**Via Docker (TTY required):**
+```bash
+docker-compose exec -it app ./reset-instance
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/reset-instance
+```
+
 ---
 
 ### 📜 License
