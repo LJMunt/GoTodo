@@ -13,6 +13,9 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  REDOCLY_CLI_VERSION: "1.25.0"
+
 concurrency:
   group: "pages"
   cancel-in-progress: true
@@ -25,12 +28,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate OpenAPI
-        run: npx -y @redocly/cli@latest lint docs/openapi.yml
+        run: npx -y @redocly/cli@${{ env.REDOCLY_CLI_VERSION }} lint docs/openapi.yml
 
       - name: Build Redoc HTML
         run: |
           mkdir -p site
-          npx -y @redocly/cli@latest build-docs docs/openapi.yml -o site/index.html
+          npx -y @redocly/cli@${{ env.REDOCLY_CLI_VERSION }} build-docs docs/openapi.yml -o site/index.html
           cp docs/openapi.yml site/openapi.yml
 
       - name: Upload Pages artifact
