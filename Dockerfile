@@ -16,6 +16,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /restore-languages cmd/restore-language
 RUN CGO_ENABLED=0 GOOS=linux go build -o /promote-admin cmd/promote-admin/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o /demote-admin cmd/demote-admin/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o /reset-instance cmd/reset-instance/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /config-export cmd/config-export/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /config-import cmd/config-import/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /user-export cmd/user-export/main.go
 
 # Final stage
 FROM alpine:latest
@@ -28,6 +31,9 @@ COPY --from=builder /restore-languages .
 COPY --from=builder /promote-admin .
 COPY --from=builder /demote-admin .
 COPY --from=builder /reset-instance .
+COPY --from=builder /config-export .
+COPY --from=builder /config-import .
+COPY --from=builder /user-export .
 COPY internal/db/migrations ./internal/db/migrations
 COPY internal/db/restore_languages.sql ./internal/db/restore_languages.sql
 
