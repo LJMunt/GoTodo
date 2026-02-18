@@ -143,6 +143,92 @@ docker-compose exec app ./restore-languages
 go run ./cmd/restore-languages
 ```
 
+#### Promoting a User to Admin
+Use the promotion tool to grant admin access by email. It will ask for a confirmation code.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./promote-admin user@example.com
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/promote-admin user@example.com
+```
+
+#### Demoting an Admin User
+Use the demotion tool to remove admin access by email. It will ask for a confirmation code.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./demote-admin user@example.com
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/demote-admin user@example.com
+```
+
+#### Resetting an Instance (Dangerous)
+Factory reset: drops the public schema, recreates it, and re-runs migrations. This permanently deletes all data.
+It requires an interactive confirmation phrase plus a random code.
+
+**Via Docker (TTY required):**
+```bash
+docker-compose exec app ./reset-instance
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/reset-instance
+```
+
+---
+
+#### Exporting Configuration
+Exports non-public config keys to a JSON file.
+When running inside Docker, the file is written inside the container; copy it out or bind-mount a host folder.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./config-export --out /tmp/config-export.json
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/config-export --out config-export.json
+```
+
+#### Importing Configuration
+Imports non-public config keys from a JSON file.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./config-import --in /tmp/config-export.json
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/config-import --in config-export.json
+```
+
+#### Exporting User Data
+Exports users, projects, tasks, tags, task_tags, and occurrences to a JSON file.
+Use `--tokenize` to anonymize emails and public IDs.
+When running inside Docker, the file is written inside the container; copy it out or bind-mount a host folder.
+
+**Via Docker:**
+```bash
+docker-compose exec app ./user-export --out /tmp/user-export.json
+docker-compose exec app ./user-export --tokenize --out /tmp/user-export-anon.json
+```
+
+**Via Local Go:**
+```bash
+go run ./cmd/user-export --out user-export.json
+go run ./cmd/user-export --tokenize --out user-export-anon.json
+```
+
 ---
 
 ### 📜 License
