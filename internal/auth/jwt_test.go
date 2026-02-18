@@ -10,7 +10,11 @@ import (
 
 func TestJWT(t *testing.T) {
 	os.Setenv("JWT_SECRET", "test-secret")
+	os.Setenv("JWT_ISSUER", "gotodo-test")
+	os.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 	defer os.Unsetenv("JWT_SECRET")
+	defer os.Unsetenv("JWT_ISSUER")
+	defer os.Unsetenv("JWT_AUDIENCE")
 
 	t.Run("SignAndParseToken", func(t *testing.T) {
 		userID := int64(123)
@@ -41,6 +45,23 @@ func TestJWT(t *testing.T) {
 		_, err = ParseToken("some-token")
 		if err == nil {
 			t.Error("expected error when JWT_SECRET is missing")
+		}
+	})
+
+	t.Run("MissingIssuerOrAudience", func(t *testing.T) {
+		os.Unsetenv("JWT_ISSUER")
+		defer os.Setenv("JWT_ISSUER", "gotodo-test")
+		_, err := SignToken(123)
+		if err == nil {
+			t.Error("expected error when JWT_ISSUER is missing")
+		}
+
+		os.Setenv("JWT_ISSUER", "gotodo-test")
+		os.Unsetenv("JWT_AUDIENCE")
+		defer os.Setenv("JWT_AUDIENCE", "gotodo-test-client")
+		_, err = SignToken(123)
+		if err == nil {
+			t.Error("expected error when JWT_AUDIENCE is missing")
 		}
 	})
 

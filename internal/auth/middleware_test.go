@@ -28,6 +28,8 @@ func (db fakeMiddlewareDB) QueryRow(ctx context.Context, sql string, args ...any
 
 func TestMiddleware_Fake(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 
 	userID := int64(1)
 	adminID := int64(2)
@@ -38,6 +40,14 @@ func TestMiddleware_Fake(t *testing.T) {
 
 	db := fakeMiddlewareDB{
 		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			if strings.Contains(sql, "FROM jwt_revocations") {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*bool) = false
+						return nil
+					},
+				}
+			}
 			if strings.Contains(sql, "FROM users") {
 				uid := args[0].(int64)
 				return fakeRow{

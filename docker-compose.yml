@@ -8,6 +8,8 @@ services:
       - DATABASE_URL=postgres://gotodo:gotodo@db:5432/gotodo?sslmode=disable
       - PORT=8081
       - JWT_SECRET=your_jwt_secret_here
+      - JWT_ISSUER=gotodo
+      - JWT_AUDIENCE=gotodo-client
       - SECRETS_MASTER_KEY_B64=base64-encoded-32-byte-key
       # Optional server hardening (Go time.Duration format, e.g. 10s, 1m)
       # - HTTP_READ_HEADER_TIMEOUT=5s

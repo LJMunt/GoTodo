@@ -15,9 +15,11 @@ type ctxKey struct{}
 var userKey ctxKey
 
 type User struct {
-	ID       int64
-	PublicID string
-	IsAdmin  bool
+	ID             int64
+	PublicID       string
+	IsAdmin        bool
+	TokenID        string
+	TokenExpiresAt time.Time
 }
 
 type apiError struct {
@@ -72,9 +74,23 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
+			if claims.ExpiresAt == nil {
+				writeErr(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
 
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
+
+			revoked, err := isTokenRevoked(ctx, db, claims.ID)
+			if err != nil {
+				writeErr(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
+			if revoked {
+				writeErr(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
 
 			var isAdmin bool
 			var isActive bool
@@ -89,7 +105,13 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 				return
 			}
 
-			user := User{ID: claims.UserID, IsAdmin: isAdmin, PublicID: publicID}
+			user := User{
+				ID:             claims.UserID,
+				IsAdmin:        isAdmin,
+				PublicID:       publicID,
+				TokenID:        claims.ID,
+				TokenExpiresAt: claims.ExpiresAt.Time,
+			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 		})
 	}
@@ -156,4 +178,18 @@ func ReadOnly(db dbExecutor) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isTokenRevoked(ctx context.Context, db dbExecutor, jti string) (bool, error) {
+	var revoked bool
+	err := db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM jwt_revocations
+			WHERE jti = $1 AND expires_at > NOW()
+		)
+	`, jti).Scan(&revoked)
+	if err != nil {
+		return false, err
+	}
+	return revoked, nil
 }

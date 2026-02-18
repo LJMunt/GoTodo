@@ -1,8 +1,11 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,9 +17,9 @@ type Claims struct {
 }
 
 func SignToken(userID int64) (string, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		return "", fmt.Errorf("JWT_SECRET is not set")
+	secret, issuer, audience, err := jwtConfig()
+	if err != nil {
+		return "", err
 	}
 
 	ttlStr := os.Getenv("JWT_ACCESS_TTL")
@@ -27,11 +30,19 @@ func SignToken(userID int64) (string, error) {
 		}
 	}
 
+	jti, err := newJTI()
+	if err != nil {
+		return "", err
+	}
+
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    issuer,
+			Audience:  jwt.ClaimStrings{audience},
+			ID:        jti,
 		},
 	}
 
@@ -40,16 +51,16 @@ func SignToken(userID int64) (string, error) {
 }
 
 func ParseToken(tokenString string) (*Claims, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		return nil, fmt.Errorf("JWT_SECRET is not set")
+	secret, issuer, audience, err := jwtConfig()
+	if err != nil {
+		return nil, err
 	}
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
 		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithIssuer(issuer), jwt.WithAudience(audience))
 	if err != nil {
 		return nil, err
 	}
@@ -62,5 +73,35 @@ func ParseToken(tokenString string) (*Claims, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid token")
 	}
+	if strings.TrimSpace(claims.ID) == "" {
+		return nil, fmt.Errorf("invalid token")
+	}
 	return claims, nil
+}
+
+func jwtConfig() (string, string, string, error) {
+	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if secret == "" {
+		return "", "", "", fmt.Errorf("JWT_SECRET is not set")
+	}
+
+	issuer := strings.TrimSpace(os.Getenv("JWT_ISSUER"))
+	if issuer == "" {
+		return "", "", "", fmt.Errorf("JWT_ISSUER is not set")
+	}
+
+	audience := strings.TrimSpace(os.Getenv("JWT_AUDIENCE"))
+	if audience == "" {
+		return "", "", "", fmt.Errorf("JWT_AUDIENCE is not set")
+	}
+
+	return secret, issuer, audience, nil
+}
+
+func newJTI() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

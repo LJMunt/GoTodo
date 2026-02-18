@@ -50,6 +50,8 @@ func (db fakeAuthDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.
 
 func TestSignupHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
@@ -209,6 +211,8 @@ func TestSignupHandler_Disabled(t *testing.T) {
 
 func TestLoginHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 
 	hash, err := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
 	if err != nil {
@@ -263,6 +267,8 @@ func TestLoginHandler_Success(t *testing.T) {
 
 func TestLoginHandler_UnverifiedEmailBlocked(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 
 	hash, err := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
 	if err != nil {
@@ -335,6 +341,8 @@ func TestLoginHandler_InvalidCredentials(t *testing.T) {
 
 func TestVerifyEmailHandler_Success(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
 	token := "abc123"
 	tokenHash := hashToken(token)
 	expiresAt := time.Now().Add(1 * time.Hour)

@@ -632,6 +632,10 @@ func PasswordChangeHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
+		if err := authmw.RevokeToken(ctx, db, u.TokenID, u.ID, u.TokenExpiresAt, "password_change"); err != nil {
+			logging.From(ctx).Error().Err(err).Msg("failed to revoke token after password change")
+		}
+
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

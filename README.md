@@ -87,6 +87,8 @@ Migrations and seed data are applied automatically on startup.
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | *Required* |
 | `JWT_SECRET` | Secret key for signing JWTs | *Required* |
+| `JWT_ISSUER` | JWT issuer claim (`iss`) | *Required* |
+| `JWT_AUDIENCE` | JWT audience claim (`aud`) | *Required* |
 | `SECRETS_MASTER_KEY_B64` | Base64-encoded 32-byte master key for encrypted secrets | *Required for secret config* |
 | `PORT` | API listening port | `8080` |
 | `MIGRATIONS_PATH` | Path to SQL migrations | `./internal/db/migrations` |
@@ -101,6 +103,28 @@ Migrations and seed data are applied automatically on startup.
 | `LOG_LEVEL_REFRESH_INTERVAL` | Log level refresh interval (Go duration) | `5s` |
 | `CONFIG_WATCH_INTERVAL` | Config sanity check interval (Go duration) | `1m` |
 | `TRUSTED_PROXIES` | Comma-separated proxy IPs/CIDRs for real client IP | *(empty)* |
+
+---
+
+### 🔐 Generating Secrets
+
+Use strong, random values for both JWT signing and the secrets master key.
+
+**JWT secret (base64, 32 bytes):**
+```bash
+openssl rand -base64 32
+```
+
+**Secrets master key (base64, 32 bytes for AES-256):**
+```bash
+openssl rand -base64 32
+```
+
+Set the outputs in your environment:
+```bash
+JWT_SECRET=...
+SECRETS_MASTER_KEY_B64=...
+```
 
 ---
 
