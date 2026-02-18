@@ -12,11 +12,12 @@ import (
 )
 
 type Claims struct {
-	UserID int64 `json:"user_id"`
+	UserID       int64 `json:"user_id"`
+	TokenVersion int64 `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
-func SignToken(userID int64) (string, error) {
+func SignToken(userID int64, tokenVersion int64) (string, error) {
 	secret, issuer, audience, err := jwtConfig()
 	if err != nil {
 		return "", err
@@ -36,7 +37,8 @@ func SignToken(userID int64) (string, error) {
 	}
 
 	claims := Claims{
-		UserID: userID,
+		UserID:       userID,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

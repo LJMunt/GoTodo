@@ -55,6 +55,7 @@ func TestMiddleware_Fake(t *testing.T) {
 						*dest[0].(*bool) = (uid == adminID) // isAdmin
 						*dest[1].(*bool) = true             // isActive
 						*dest[2].(*string) = "ULID"         // publicID
+						*dest[3].(*int64) = 0               // tokenVersion
 						return nil
 					},
 				}
@@ -76,7 +77,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	}
 
 	t.Run("RequireAuth - Valid Token", func(t *testing.T) {
-		token, _ := SignToken(userID)
+		token, _ := SignToken(userID, 0)
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -101,7 +102,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	})
 
 	t.Run("RequireAdmin - Admin User", func(t *testing.T) {
-		token, _ := SignToken(adminID)
+		token, _ := SignToken(adminID, 0)
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -115,7 +116,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	})
 
 	t.Run("RequireAdmin - Regular User", func(t *testing.T) {
-		token, _ := SignToken(userID)
+		token, _ := SignToken(userID, 0)
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -129,7 +130,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	})
 
 	t.Run("ReadOnly - Block regular user write", func(t *testing.T) {
-		token, _ := SignToken(userID)
+		token, _ := SignToken(userID, 0)
 		req := httptest.NewRequest("POST", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -143,7 +144,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	})
 
 	t.Run("ReadOnly - Allow admin user write", func(t *testing.T) {
-		token, _ := SignToken(adminID)
+		token, _ := SignToken(adminID, 0)
 		req := httptest.NewRequest("POST", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -157,7 +158,7 @@ func TestMiddleware_Fake(t *testing.T) {
 	})
 
 	t.Run("ReadOnly - Allow regular user GET", func(t *testing.T) {
-		token, _ := SignToken(userID)
+		token, _ := SignToken(userID, 0)
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()

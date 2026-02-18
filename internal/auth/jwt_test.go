@@ -18,7 +18,7 @@ func TestJWT(t *testing.T) {
 
 	t.Run("SignAndParseToken", func(t *testing.T) {
 		userID := int64(123)
-		token, err := SignToken(userID)
+		token, err := SignToken(userID, 0)
 		if err != nil {
 			t.Fatalf("failed to sign token: %v", err)
 		}
@@ -37,7 +37,7 @@ func TestJWT(t *testing.T) {
 		os.Unsetenv("JWT_SECRET")
 		defer os.Setenv("JWT_SECRET", "test-secret")
 
-		_, err := SignToken(123)
+		_, err := SignToken(123, 0)
 		if err == nil {
 			t.Error("expected error when JWT_SECRET is missing")
 		}
@@ -51,7 +51,7 @@ func TestJWT(t *testing.T) {
 	t.Run("MissingIssuerOrAudience", func(t *testing.T) {
 		os.Unsetenv("JWT_ISSUER")
 		defer os.Setenv("JWT_ISSUER", "gotodo-test")
-		_, err := SignToken(123)
+		_, err := SignToken(123, 0)
 		if err == nil {
 			t.Error("expected error when JWT_ISSUER is missing")
 		}
@@ -59,7 +59,7 @@ func TestJWT(t *testing.T) {
 		os.Setenv("JWT_ISSUER", "gotodo-test")
 		os.Unsetenv("JWT_AUDIENCE")
 		defer os.Setenv("JWT_AUDIENCE", "gotodo-test-client")
-		_, err = SignToken(123)
+		_, err = SignToken(123, 0)
 		if err == nil {
 			t.Error("expected error when JWT_AUDIENCE is missing")
 		}
@@ -74,10 +74,14 @@ func TestJWT(t *testing.T) {
 
 	t.Run("RejectsUnexpectedAlgorithm", func(t *testing.T) {
 		claims := Claims{
-			UserID: 123,
+			UserID:       123,
+			TokenVersion: 0,
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
 				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Issuer:    "gotodo-test",
+				Audience:  jwt.ClaimStrings{"gotodo-test-client"},
+				ID:        "test-jti",
 			},
 		}
 
@@ -97,7 +101,7 @@ func TestJWT(t *testing.T) {
 		os.Setenv("JWT_ACCESS_TTL", "1s")
 		defer os.Unsetenv("JWT_ACCESS_TTL")
 
-		token, err := SignToken(123)
+		token, err := SignToken(123, 0)
 		if err != nil {
 			t.Fatalf("failed to sign token: %v", err)
 		}
