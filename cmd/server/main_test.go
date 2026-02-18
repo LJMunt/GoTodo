@@ -11,7 +11,7 @@ import (
 func TestRouter(t *testing.T) {
 	// We pass nil for DB since we want to see if we can at least test non-DB endpoints
 	// or if the router can be initialized.
-	deps := app.Deps{DB: nil}
+	deps := app.Deps{DB: nil, Config: app.DefaultConfig()}
 	r := api.NewRouter(deps)
 
 	ts := httptest.NewServer(r)

@@ -8,4 +8,5 @@ import (
 type Deps struct {
 	DB     *pgxpool.Pool
 	Logger zerolog.Logger
+	Config Config
 }

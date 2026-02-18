@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -22,43 +21,59 @@ func main() {
 	logger := logging.Init()
 	log.Logger = logger
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		logger.Fatal().Msg("DATABASE_URL environment variable not set")
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("config load failed")
 	}
 
-	migrationsPath := os.Getenv("MIGRATIONS_PATH")
-	if migrationsPath == "" {
-		migrationsPath = "internal/db/migrations"
-	}
-
-	logger.Info().Str("path", migrationsPath).Msg("Running migrations...")
-	if err := db.Migrate(dsn, migrationsPath); err != nil {
+	logger.Info().Str("path", cfg.MigrationsPath).Msg("Running migrations...")
+	if err := db.Migrate(cfg.DatabaseURL, cfg.MigrationsPath); err != nil {
 		logger.Fatal().Err(err).Msg("migrations failed")
 	}
 	logger.Info().Msg("Migrations completed successfully")
 
 	//DB Connection
-	pool, err := db.Connect(ctx)
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("db connect failed")
 	}
 	defer pool.Close()
 
 	// Start level refresher
-	logging.StartLevelRefresher(ctx, logger, &logging.DBLevelSource{Pool: pool}, 5*time.Second)
+	logging.StartLevelRefresher(ctx, logger, &logging.DBLevelSource{Pool: pool}, cfg.Logging.LevelRefreshInterval)
 
 	// Start configuration sanity checker (checks every 1 minute)
-	logging.StartConfigWatcher(ctx, logger, pool, 1*time.Minute)
+	logging.StartConfigWatcher(ctx, logger, pool, cfg.Logging.ConfigWatchInterval)
 
-	r := api.NewRouter(app.Deps{DB: pool, Logger: logger})
+	r := api.NewRouter(app.Deps{DB: pool, Logger: logger, Config: cfg})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	addr := ":" + cfg.Port
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
 
-	addr := ":" + port
+	errCh := make(chan error, 1)
 	logger.Info().Str("addr", addr).Msg("listening")
-	logger.Fatal().Err(http.ListenAndServe(addr, r)).Msg("server stopped")
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error().Err(err).Msg("graceful shutdown failed")
+		}
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			logger.Fatal().Err(err).Msg("server stopped")
+		}
+	}
 }

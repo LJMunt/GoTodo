@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -35,10 +35,9 @@ func Migrate(dsn string, migrationsPath string) error {
 	return nil
 }
 
-func Connect(ctx context.Context) (*pgxpool.Pool, error) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return nil, fmt.Errorf("DATABASE_URL environment variable not set")
+func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return nil, fmt.Errorf("DATABASE_URL is empty")
 	}
 
 	cfg, err := pgxpool.ParseConfig(dsn)

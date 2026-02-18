@@ -4,9 +4,25 @@ services:
     ports:
       - "8081:8081"
     environment:
+      # Required runtime settings
       - DATABASE_URL=postgres://gotodo:gotodo@db:5432/gotodo?sslmode=disable
       - PORT=8081
       - JWT_SECRET=your_jwt_secret_here
+      - SECRETS_MASTER_KEY_B64=base64-encoded-32-byte-key
+      # Optional server hardening (Go time.Duration format, e.g. 10s, 1m)
+      # - HTTP_READ_HEADER_TIMEOUT=5s
+      # - HTTP_READ_TIMEOUT=20s
+      # - HTTP_WRITE_TIMEOUT=20s
+      # - HTTP_IDLE_TIMEOUT=60s
+      # - HTTP_SHUTDOWN_TIMEOUT=10s
+      # - HTTP_MAX_HEADER_BYTES=1048576
+      # - HTTP_MAX_BODY_BYTES=10485760
+      # - HTTP_ADMIN_MAX_BODY_BYTES=52428800
+      # Trusted proxy IPs/CIDRs for real client IP (comma-separated)
+      # - TRUSTED_PROXIES=10.0.0.0/8,192.168.0.0/16
+      # Optional logging/config refresh intervals (Go time.Duration format)
+      # - LOG_LEVEL_REFRESH_INTERVAL=5s
+      # - CONFIG_WATCH_INTERVAL=1m
     depends_on:
       db:
         condition: service_healthy

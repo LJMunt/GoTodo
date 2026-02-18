@@ -9,11 +9,9 @@ import (
 
 func TestConnect(t *testing.T) {
 	origDSN := os.Getenv("DATABASE_URL")
-	defer os.Setenv("DATABASE_URL", origDSN)
 
 	t.Run("Missing DATABASE_URL", func(t *testing.T) {
-		os.Unsetenv("DATABASE_URL")
-		pool, err := Connect(context.Background())
+		pool, err := Connect(context.Background(), "")
 		if err == nil {
 			pool.Close()
 			t.Error("expected error when DATABASE_URL is missing")
@@ -21,8 +19,7 @@ func TestConnect(t *testing.T) {
 	})
 
 	t.Run("Invalid DATABASE_URL format", func(t *testing.T) {
-		os.Setenv("DATABASE_URL", "invalid-dsn")
-		pool, err := Connect(context.Background())
+		pool, err := Connect(context.Background(), "invalid-dsn")
 		if err == nil {
 			pool.Close()
 			t.Error("expected error for invalid DATABASE_URL format")
@@ -33,11 +30,10 @@ func TestConnect(t *testing.T) {
 		if origDSN == "" {
 			t.Skip("DATABASE_URL not set, skipping valid connection test")
 		}
-		os.Setenv("DATABASE_URL", origDSN)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		pool, err := Connect(ctx)
+		pool, err := Connect(ctx, origDSN)
 		if err != nil {
 			t.Fatalf("failed to connect: %v", err)
 		}
@@ -52,11 +48,10 @@ func TestConnect(t *testing.T) {
 		if origDSN == "" {
 			t.Skip("DATABASE_URL not set, skipping context cancelled test")
 		}
-		os.Setenv("DATABASE_URL", origDSN)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // cancel immediately
 
-		pool, err := Connect(ctx)
+		pool, err := Connect(ctx, origDSN)
 		if err == nil {
 			pool.Close()
 			t.Error("expected error for cancelled context")

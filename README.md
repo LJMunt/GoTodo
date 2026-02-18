@@ -87,8 +87,20 @@ Migrations and seed data are applied automatically on startup.
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | *Required* |
 | `JWT_SECRET` | Secret key for signing JWTs | *Required* |
+| `SECRETS_MASTER_KEY_B64` | Base64-encoded 32-byte master key for encrypted secrets | *Required for secret config* |
 | `PORT` | API listening port | `8080` |
 | `MIGRATIONS_PATH` | Path to SQL migrations | `./internal/db/migrations` |
+| `HTTP_READ_HEADER_TIMEOUT` | Max time to read request headers (Go duration) | `5s` |
+| `HTTP_READ_TIMEOUT` | Max time to read full request (Go duration) | `20s` |
+| `HTTP_WRITE_TIMEOUT` | Max time to write response (Go duration) | `20s` |
+| `HTTP_IDLE_TIMEOUT` | Max idle keep-alive time (Go duration) | `60s` |
+| `HTTP_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout (Go duration) | `10s` |
+| `HTTP_MAX_HEADER_BYTES` | Max request header size in bytes | `1048576` |
+| `HTTP_MAX_BODY_BYTES` | Max request body size (bytes) | `10485760` |
+| `HTTP_ADMIN_MAX_BODY_BYTES` | Max request body size for `/api/v1/admin` (bytes) | `52428800` |
+| `LOG_LEVEL_REFRESH_INTERVAL` | Log level refresh interval (Go duration) | `5s` |
+| `CONFIG_WATCH_INTERVAL` | Config sanity check interval (Go duration) | `1m` |
+| `TRUSTED_PROXIES` | Comma-separated proxy IPs/CIDRs for real client IP | *(empty)* |
 
 ---
 

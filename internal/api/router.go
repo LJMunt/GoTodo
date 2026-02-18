@@ -41,11 +41,12 @@ func NewRouter(deps app.Deps) chi.Router {
 		return secureMiddleware.Handler(next)
 	})
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(RealIPFromTrustedProxies(deps.Config.Server.TrustedProxies))
 	r.Use(logging.RequestLogger(deps.Logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(middleware.CleanPath)
+	r.Use(BodyLimitByPath(deps.Config.Server.MaxBodyBytes, deps.Config.Server.AdminMaxBodyBytes, "/api/v1/admin"))
 
 	// Global rate limit: 100 requests per minute per IP
 	r.Use(httprate.LimitByIP(100, 1*time.Minute))

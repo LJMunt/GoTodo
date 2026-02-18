@@ -26,7 +26,7 @@ func main() {
 	}
 
 	// Connect to database
-	pool, err := db.Connect(ctx)
+	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
