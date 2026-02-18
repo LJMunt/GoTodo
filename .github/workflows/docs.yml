@@ -27,12 +27,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install React for Redoc CLI
+        run: npm install -g react@18
+
       - name: Validate OpenAPI
-        run: npx -y @redocly/cli@${{ env.REDOCLY_CLI_VERSION }} lint docs/openapi.yml
+        run: |
+          export NODE_PATH="$(npm root -g)"
+          export NODE_OPTIONS="--require ${{ github.workspace }}/scripts/redoc-react-shim.cjs"
+          npx -y @redocly/cli@${{ env.REDOCLY_CLI_VERSION }} lint docs/openapi.yml
 
       - name: Build Redoc HTML
         run: |
           mkdir -p site
+          export NODE_PATH="$(npm root -g)"
+          export NODE_OPTIONS="--require ${{ github.workspace }}/scripts/redoc-react-shim.cjs"
           npx -y @redocly/cli@${{ env.REDOCLY_CLI_VERSION }} build-docs docs/openapi.yml -o site/index.html
           cp docs/openapi.yml site/openapi.yml
 
