@@ -333,6 +333,31 @@ func DeleteUserHandler(db userDB) http.HandlerFunc {
 	}
 }
 
+func LogoutUserHandler(db userDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "UPDATE users SET token_version = token_version + 1, updated_at = now() WHERE id = $1", id)
+		if err != nil {
+			writeErr(w, "failed to revoke user tokens", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func GetUserEmailVerificationHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseInt64Param(r, "id")

@@ -771,6 +771,19 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke current token)
+      description: Revokes the current access token so it can no longer be used.
+      responses:
+        "204":
+          description: Logged out
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
   /api/v1/users/me:
     get:
       tags: [Users]
@@ -2064,6 +2077,44 @@ paths:
       responses:
         "204":
           description: User deleted
+        "400":
+          description: Invalid ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "invalid user id"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "user not found"
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{id}/logout:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Admin]
+      summary: Logout user (Admin only)
+      description: Revokes all tokens for the user by bumping their token version.
+      responses:
+        "204":
+          description: User logged out
         "400":
           description: Invalid ID
           content:

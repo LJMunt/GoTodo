@@ -81,6 +81,8 @@ func NewRouter(deps app.Deps) chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
 
+			r.Post("/auth/logout", auth.LogoutHandler(deps.DB))
+
 			r.Route("/auth/password-change", func(r chi.Router) {
 				// Brute force protection for password change: 10 requests per minute per IP
 				r.Use(httprate.LimitByIP(10, 1*time.Minute))

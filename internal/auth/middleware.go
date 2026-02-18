@@ -20,6 +20,7 @@ type User struct {
 	IsAdmin        bool
 	TokenID        string
 	TokenExpiresAt time.Time
+	TokenVersion   int64
 }
 
 type apiError struct {
@@ -95,12 +96,17 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 			var isAdmin bool
 			var isActive bool
 			var publicID string
+			var tokenVersion int64
 			err = db.QueryRow(ctx,
-				`SELECT is_admin, is_active, public_id FROM users WHERE id=$1`,
+				`SELECT is_admin, is_active, public_id, token_version FROM users WHERE id=$1`,
 				claims.UserID,
-			).Scan(&isAdmin, &isActive, &publicID)
+			).Scan(&isAdmin, &isActive, &publicID, &tokenVersion)
 
 			if err != nil || !isActive {
+				writeErr(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
+			if claims.TokenVersion != tokenVersion {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
@@ -111,6 +117,7 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 				PublicID:       publicID,
 				TokenID:        claims.ID,
 				TokenExpiresAt: claims.ExpiresAt.Time,
+				TokenVersion:   tokenVersion,
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 		})

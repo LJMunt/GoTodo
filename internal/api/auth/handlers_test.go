@@ -74,6 +74,7 @@ func TestSignupHandler_Success(t *testing.T) {
 			return fakeRow{
 				scanFn: func(dest ...any) error {
 					*dest[0].(*int64) = 42
+					*dest[1].(*int64) = 0
 					return nil
 				},
 			}
@@ -237,6 +238,7 @@ func TestLoginHandler_Success(t *testing.T) {
 					*dest[2].(*bool) = true
 					*dest[3].(*bool) = false
 					*dest[4].(**time.Time) = &now
+					*dest[5].(*int64) = 0
 					return nil
 				},
 			}
@@ -292,6 +294,7 @@ func TestLoginHandler_UnverifiedEmailBlocked(t *testing.T) {
 					*dest[2].(*bool) = true
 					*dest[3].(*bool) = false
 					*dest[4].(**time.Time) = nil
+					*dest[5].(*int64) = 0
 					return nil
 				},
 			}

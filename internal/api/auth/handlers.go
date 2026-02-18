@@ -169,18 +169,19 @@ func SignupHandler(db authDB) http.HandlerFunc {
 		defer cancel()
 
 		var id int64
+		var tokenVersion int64
 		if requireVerification {
 			err = db.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, public_id) VALUES ($1, $2, $3)
-				 RETURNING id`,
+				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
-			).Scan(&id)
+			).Scan(&id, &tokenVersion)
 		} else {
 			err = db.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, email_verified_at, public_id) VALUES ($1, $2, NOW(), $3)
-				 RETURNING id`,
+				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
-			).Scan(&id)
+			).Scan(&id, &tokenVersion)
 		}
 
 		if err != nil {
@@ -209,7 +210,7 @@ func SignupHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		token, err := authmw.SignToken(id)
+		token, err := authmw.SignToken(id, tokenVersion)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
@@ -246,14 +247,15 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			isActive        bool
 			isAdmin         bool
 			emailVerifiedAt *time.Time
+			tokenVersion    int64
 		)
 
 		err := db.QueryRow(ctx,
-			`SELECT id, password_hash, is_active, is_admin, email_verified_at
+			`SELECT id, password_hash, is_active, is_admin, email_verified_at, token_version
 			 FROM users
 			 WHERE email=$1`,
 			email,
-		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt)
+		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt, &tokenVersion)
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
@@ -288,7 +290,7 @@ func LoginHandler(db authDB) http.HandlerFunc {
 
 		l.Info().Int64("user_id", id).Str("email", email).Msg("user login successful")
 
-		token, err := authmw.SignToken(id) // only userID in JWT now
+		token, err := authmw.SignToken(id, tokenVersion)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
@@ -368,7 +370,13 @@ func VerifyEmailHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		signed, err := authmw.SignToken(userID)
+		var tokenVersion int64
+		if err := db.QueryRow(ctx, "SELECT token_version FROM users WHERE id = $1", userID).Scan(&tokenVersion); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to sign token")
+			return
+		}
+
+		signed, err := authmw.SignToken(userID, tokenVersion)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to sign token")
 			return
@@ -634,6 +642,26 @@ func PasswordChangeHandler(db authDB) http.HandlerFunc {
 
 		if err := authmw.RevokeToken(ctx, db, u.TokenID, u.ID, u.TokenExpiresAt, "password_change"); err != nil {
 			logging.From(ctx).Error().Err(err).Msg("failed to revoke token after password change")
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func LogoutHandler(db authDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, ok := authmw.FromContext(r.Context())
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		if err := authmw.RevokeToken(ctx, db, u.TokenID, u.ID, u.TokenExpiresAt, "logout"); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to revoke token")
+			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
