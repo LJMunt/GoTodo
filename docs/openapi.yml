@@ -2138,6 +2138,52 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
 
+  /api/v1/admin/users/{id}/reset-password:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Admin]
+      summary: Reset user password (Admin only)
+      description: Resets a user's password and forces logout by incrementing token version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  minLength: 8
+                  example: "newpassword123"
+              required: [password]
+      responses:
+        "204":
+          description: Password reset successfully
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
   /api/v1/admin/users/{id}/email-verification:
     parameters:
       - name: id
