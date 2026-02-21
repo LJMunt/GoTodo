@@ -317,7 +317,9 @@ components:
               type: boolean
             requireEmailVerification:
               type: boolean
-          required: [allowSignup, requireEmailVerification]
+            allowReset:
+              type: boolean
+          required: [allowSignup, requireEmailVerification, allowReset]
         instance:
           type: object
           properties:
@@ -726,6 +728,136 @@ paths:
                   value: {error: "email is required"}
         "500":
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      description: Sends a password reset email if the user exists. Always returns 200.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+              required: [email]
+      responses:
+        "200":
+          description: Request processed
+        "403":
+          description: Password reset is disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "reset_disabled"
+
+  /api/v1/auth/password-reset/validate:
+    post:
+      tags: [Auth]
+      summary: Validate password reset token
+      description: Checks if a password reset token is valid and not expired.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                selector:
+                  type: string
+                token:
+                  type: string
+              required: [selector, token]
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  expiresAt:
+                    type: string
+                    format: date-time
+                required: [valid]
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm password reset
+      description: Sets a new password using a valid reset token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                selector:
+                  type: string
+                token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+              required: [selector, token, newPassword]
+      responses:
+        "200":
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+              example:
+                ok: true
+        "403":
+          description: Password reset is disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  error:
+                    type: string
+                required: [ok]
+              example:
+                ok: false
+                error: "reset_disabled"
+        "400":
+          description: Password reset failed (invalid token or weak password)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  error:
+                    type: string
+                required: [ok]
+              examples:
+                invalid_token:
+                  value: { ok: false, error: "invalid_or_expired" }
+                weak_password:
+                  value: { ok: false, error: "password_too_weak" }
+
   /api/v1/auth/password-change:
     post:
       tags: [Auth]

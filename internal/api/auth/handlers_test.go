@@ -38,6 +38,9 @@ func (db fakeAuthDB) Query(ctx context.Context, sql string, args ...any) (pgx.Ro
 }
 
 func (db fakeAuthDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if db.queryRowFn == nil {
+		return fakeRow{scanFn: func(dest ...any) error { return pgx.ErrNoRows }}
+	}
 	return db.queryRowFn(ctx, sql, args...)
 }
 
@@ -484,5 +487,244 @@ func TestResendVerificationHandler_SendsWhenRequired(t *testing.T) {
 	}
 	if len(sent.To) != 1 || sent.To[0] != "user@example.com" {
 		t.Fatalf("expected email to be sent")
+	}
+}
+
+func TestPasswordReset_FullFlow(t *testing.T) {
+	var storedSelector string
+	var storedTokenHash string
+	var updatedPasswordHash string
+
+	db := fakeAuthDB{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			// Rate limit check
+			if strings.Contains(sql, "FROM password_reset_tokens") && strings.Contains(sql, "count(*)") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*int) = 0
+					return nil
+				}}
+			}
+			// User lookup
+			if strings.Contains(sql, "FROM users") && strings.Contains(sql, "id") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*int64) = 123
+					return nil
+				}}
+			}
+			// Config lookups
+			if strings.Contains(sql, "FROM config_keys") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					if len(args) > 0 && args[0] == "auth.allowReset" {
+						*dest[0].(*[]byte) = []byte("true")
+						return nil
+					}
+					*dest[0].(*[]byte) = []byte(`""`)
+					return nil
+				}}
+			}
+			// Validate/Confirm lookups
+			if strings.Contains(sql, "FROM password_reset_tokens") {
+				if strings.Contains(sql, "token_hash, expires_at") {
+					return fakeRow{scanFn: func(dest ...any) error {
+						if args[0].(string) == storedSelector {
+							*dest[0].(*string) = storedTokenHash
+							*dest[1].(*time.Time) = time.Now().Add(time.Hour)
+							return nil
+						}
+						return pgx.ErrNoRows
+					}}
+				}
+				if strings.Contains(sql, "user_id, token_hash") {
+					return fakeRow{scanFn: func(dest ...any) error {
+						if args[0].(string) == storedSelector {
+							*dest[0].(*int64) = 123
+							*dest[1].(*string) = storedTokenHash
+							return nil
+						}
+						return pgx.ErrNoRows
+					}}
+				}
+			}
+			return fakeRow{scanFn: func(dest ...any) error { return pgx.ErrNoRows }}
+		},
+		execFn: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			// Token storage
+			if strings.Contains(sql, "INSERT INTO password_reset_tokens") {
+				storedSelector = args[1].(string)
+				storedTokenHash = args[2].(string)
+			}
+			// Password update
+			if strings.Contains(sql, "UPDATE users") {
+				updatedPasswordHash = args[0].(string)
+			}
+			return pgconn.CommandTag{}, nil
+		},
+	}
+
+	// Mock token generation
+	oldNewToken := newPasswordResetToken
+	defer func() { newPasswordResetToken = oldNewToken }()
+	newPasswordResetToken = func() (string, string, string, error) {
+		return "sel123", "tok123", hashToken("tok123"), nil
+	}
+
+	// Mock mail sending
+	oldSendMail := sendMail
+	defer func() { sendMail = oldSendMail }()
+	sendMail = func(ctx context.Context, db mailDB, msg mail.Message) error {
+		return nil
+	}
+
+	// 1. Request reset
+	reqBody, _ := json.Marshal(map[string]string{"email": "test@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/request", bytes.NewBuffer(reqBody))
+	rec := httptest.NewRecorder()
+	RequestPasswordResetHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	if storedSelector != "sel123" {
+		t.Fatalf("expected selector 'sel123', got %q", storedSelector)
+	}
+
+	// 2. Validate token
+	valBody, _ := json.Marshal(map[string]string{"selector": "sel123", "token": "tok123"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/validate", bytes.NewBuffer(valBody))
+	rec = httptest.NewRecorder()
+	ValidatePasswordResetHandler(db).ServeHTTP(rec, req)
+
+	var valResp struct {
+		Valid bool `json:"valid"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &valResp)
+	if !valResp.Valid {
+		t.Error("expected token to be valid")
+	}
+
+	// 3. Confirm
+	confBody, _ := json.Marshal(map[string]string{
+		"selector":    "sel123",
+		"token":       "tok123",
+		"newPassword": "NewPassword123!",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/confirm", bytes.NewBuffer(confBody))
+	rec = httptest.NewRecorder()
+	ConfirmPasswordResetHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var confResp struct {
+		OK bool `json:"ok"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &confResp)
+	if !confResp.OK {
+		t.Error("expected ok: true")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(updatedPasswordHash), []byte("NewPassword123!")); err != nil {
+		t.Errorf("password hash mismatch: %v", err)
+	}
+}
+
+func TestPasswordReset_InvalidToken(t *testing.T) {
+	db := fakeAuthDB{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			return fakeRow{scanFn: func(dest ...any) error { return pgx.ErrNoRows }}
+		},
+	}
+
+	confBody, _ := json.Marshal(map[string]string{
+		"selector":    "invalid",
+		"token":       "invalid",
+		"newPassword": "NewPassword123!",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/confirm", bytes.NewBuffer(confBody))
+	rec := httptest.NewRecorder()
+	ConfirmPasswordResetHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+	var confResp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &confResp)
+	if confResp.OK {
+		t.Error("expected ok: false")
+	}
+	if confResp.Error != "invalid_or_expired" {
+		t.Errorf("expected error 'invalid_or_expired', got %q", confResp.Error)
+	}
+}
+
+func TestPasswordReset_WeakPassword(t *testing.T) {
+	db := fakeAuthDB{}
+	confBody, _ := json.Marshal(map[string]string{
+		"selector":    "sel123",
+		"token":       "tok123",
+		"newPassword": "weak",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/confirm", bytes.NewBuffer(confBody))
+	rec := httptest.NewRecorder()
+	ConfirmPasswordResetHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+	var confResp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &confResp)
+	if confResp.Error != "password_too_weak" {
+		t.Errorf("expected error 'password_too_weak', got %q", confResp.Error)
+	}
+}
+
+func TestPasswordReset_Disabled(t *testing.T) {
+	db := fakeAuthDB{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			if strings.Contains(sql, "auth.allowReset") || (len(args) > 0 && args[0] == "auth.allowReset") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*[]byte) = []byte("false")
+					return nil
+				}}
+			}
+			return fakeRow{scanFn: func(dest ...any) error { return pgx.ErrNoRows }}
+		},
+	}
+
+	// 1. Request
+	reqBody, _ := json.Marshal(map[string]string{"email": "test@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/request", bytes.NewBuffer(reqBody))
+	rec := httptest.NewRecorder()
+	RequestPasswordResetHandler(db).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Request: expected 403, got %d", rec.Code)
+	}
+
+	// 2. Validate
+	valBody, _ := json.Marshal(map[string]string{"selector": "sel", "token": "tok"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/validate", bytes.NewBuffer(valBody))
+	rec = httptest.NewRecorder()
+	ValidatePasswordResetHandler(db).ServeHTTP(rec, req)
+	var valResp struct {
+		Valid bool `json:"valid"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &valResp)
+	if valResp.Valid {
+		t.Error("Validate: expected valid=false")
+	}
+
+	// 3. Confirm
+	confBody, _ := json.Marshal(map[string]string{"selector": "sel", "token": "tok", "newPassword": "NewPassword123!"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/confirm", bytes.NewBuffer(confBody))
+	rec = httptest.NewRecorder()
+	ConfirmPasswordResetHandler(db).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Confirm: expected 403, got %d", rec.Code)
 	}
 }
