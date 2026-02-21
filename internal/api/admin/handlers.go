@@ -358,6 +358,53 @@ func LogoutUserHandler(db userDB) http.HandlerFunc {
 	}
 }
 
+func ResetUserPasswordHandler(db userDB) http.HandlerFunc {
+	type resetRequest struct {
+		Password string `json:"password"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+
+		var req resetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if len(req.Password) < 8 {
+			writeErr(w, "password too short (min 8 characters)", http.StatusBadRequest)
+			return
+		}
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, "failed to hash password", http.StatusInternalServerError)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "UPDATE users SET password_hash = $1, token_version = token_version + 1, updated_at = now() WHERE id = $2", string(hash), id)
+		if err != nil {
+			writeErr(w, "failed to reset password", http.StatusInternalServerError)
+			return
+		}
+
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func GetUserEmailVerificationHandler(db userDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseInt64Param(r, "id")

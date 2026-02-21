@@ -198,6 +198,14 @@ class GoToDoAPI:
     def admin_disable_user(self, admin_token: str, user_id: int) -> HTTPResponse:
         return self.http.request("DELETE", f"/api/v1/admin/users/{user_id}", token=admin_token)
 
+    def admin_reset_user_password(self, admin_token: str, user_id: int, password: str) -> HTTPResponse:
+        return self.http.request(
+            "POST",
+            f"/api/v1/admin/users/{user_id}/reset-password",
+            token=admin_token,
+            json_body={"password": password},
+        )
+
     # ---- projects ----
     def create_project(self, token: str, name: str, description: Optional[str] = None) -> HTTPResponse:
         body = {"name": name}

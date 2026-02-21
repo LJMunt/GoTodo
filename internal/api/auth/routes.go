@@ -12,4 +12,10 @@ func Routes(r chi.Router, deps app.Deps) {
 	r.Get("/verify-email", VerifyEmailHandler(deps.DB))
 	r.Post("/verify-email", VerifyEmailHandler(deps.DB))
 	r.Post("/verify-email/resend", ResendVerificationHandler(deps.DB))
+
+	r.Route("/password-reset", func(r chi.Router) {
+		r.Post("/request", RequestPasswordResetHandler(deps.DB))
+		r.Post("/validate", ValidatePasswordResetHandler(deps.DB))
+		r.Post("/confirm", ConfirmPasswordResetHandler(deps.DB))
+	})
 }

@@ -17,6 +17,7 @@ func TestGetConfigStatusHandler(t *testing.T) {
 				data: [][]any{
 					{"auth.allowSignup", "false"},
 					{"auth.requireEmailVerification", "true"},
+					{"auth.allowReset", "true"},
 					{"instance.readOnly", "false"},
 				},
 			}, nil
@@ -42,6 +43,9 @@ func TestGetConfigStatusHandler(t *testing.T) {
 	}
 	if resp.Auth.RequireEmailVerification != true {
 		t.Errorf("expected requireEmailVerification true, got %v", resp.Auth.RequireEmailVerification)
+	}
+	if resp.Auth.AllowReset != true {
+		t.Errorf("expected allowReset true, got %v", resp.Auth.AllowReset)
 	}
 	if resp.Instance.ReadOnly != false {
 		t.Errorf("expected readOnly false, got %v", resp.Instance.ReadOnly)

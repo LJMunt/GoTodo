@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -460,6 +461,26 @@ func requireEmailVerification(ctx context.Context, db authDB) (bool, error) {
 	return v, nil
 }
 
+func isPasswordResetAllowed(ctx context.Context, db authDB) (bool, error) {
+	var raw []byte
+	err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = $1", "auth.allowReset").Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, err
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err != nil {
+		var s string
+		if err2 := json.Unmarshal(raw, &s); err2 == nil {
+			return s == "true", nil
+		}
+		return false, err
+	}
+	return v, nil
+}
+
 func getConfigString(ctx context.Context, db authDB, key string) (string, error) {
 	var raw []byte
 	if err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = $1", key).Scan(&raw); err != nil {
@@ -665,5 +686,241 @@ func LogoutHandler(db authDB) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+var newPasswordResetToken = func() (string, string, string, error) {
+	selectorRaw := make([]byte, 16)
+	if _, err := rand.Read(selectorRaw); err != nil {
+		return "", "", "", err
+	}
+	selector := hex.EncodeToString(selectorRaw)
+
+	validatorRaw := make([]byte, 32)
+	if _, err := rand.Read(validatorRaw); err != nil {
+		return "", "", "", err
+	}
+	validator := hex.EncodeToString(validatorRaw)
+
+	return selector, validator, hashToken(validator), nil
+}
+
+func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
+	type request struct {
+		Email string `json:"email"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		allowed, err := isPasswordResetAllowed(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to check if password reset is allowed")
+			return
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, apiError{
+				Error:   "reset_disabled",
+				Message: "Password reset is currently disabled.",
+			})
+			return
+		}
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		email := strings.TrimSpace(strings.ToLower(req.Email))
+		if email == "" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		ip := extractIP(r.RemoteAddr).String()
+
+		// Rate limit: check if a token was created in the last 15 minutes for this email or IP
+		var count int
+		err = db.QueryRow(ctx, `
+			SELECT count(*) FROM password_reset_tokens prt
+			JOIN users u ON u.id = prt.user_id
+			WHERE (u.email = $1 OR prt.ip_address = $2)
+			AND prt.created_at > now() - interval '15 minutes'
+		`, email, ip).Scan(&count)
+
+		if err == nil && count > 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		var userID int64
+		err = db.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL", email).Scan(&userID)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		selector, validator, tokenHash, err := newPasswordResetToken()
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		expiresAt := time.Now().Add(time.Hour)
+		_, err = db.Exec(ctx, `
+			INSERT INTO password_reset_tokens (user_id, selector, token_hash, expires_at, ip_address)
+			VALUES ($1, $2, $3, $4, $5)
+		`, userID, selector, tokenHash, expiresAt, ip)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		instanceURL, _ := getConfigString(ctx, db, "instance.url")
+		subject, _ := getConfigString(ctx, db, "mail.reset_password_subject")
+		bodyTpl, _ := getConfigString(ctx, db, "mail.reset_password_body")
+
+		if subject == "" {
+			subject = "Reset your password"
+		}
+		if bodyTpl == "" {
+			bodyTpl = "Hi,<br><br>You requested a password reset. Please click the link below to set a new password:<br><a href=\"{{.ResetURL}}\">Reset password</a><br><br>If you did not request this, you can safely ignore this email."
+		}
+
+		resetURL := fmt.Sprintf("%s/reset-password?selector=%s&token=%s", strings.TrimSuffix(instanceURL, "/"), selector, validator)
+
+		data := struct {
+			ResetURL string
+		}{
+			ResetURL: resetURL,
+		}
+
+		t, err := template.New("reset").Parse(bodyTpl)
+		if err == nil {
+			var b strings.Builder
+			if err := t.Execute(&b, data); err == nil {
+				htmlBody := b.String()
+				_ = sendMail(ctx, db, mail.Message{
+					To:      []string{email},
+					Subject: subject,
+					HTML:    htmlBody,
+					Text:    htmlToText(htmlBody),
+				})
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func ValidatePasswordResetHandler(db authDB) http.HandlerFunc {
+	type request struct {
+		Selector string `json:"selector"`
+		Token    string `json:"token"`
+	}
+	type response struct {
+		Valid     bool       `json:"valid"`
+		ExpiresAt *time.Time `json:"expiresAt,omitzero"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		allowed, err := isPasswordResetAllowed(ctx, db)
+		if err == nil && !allowed {
+			writeJSON(w, http.StatusOK, response{Valid: false})
+			return
+		}
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusOK, response{Valid: false})
+			return
+		}
+
+		var tokenHash string
+		var expiresAt time.Time
+		err = db.QueryRow(ctx, "SELECT token_hash, expires_at FROM password_reset_tokens WHERE selector = $1 AND expires_at > now()", req.Selector).Scan(&tokenHash, &expiresAt)
+		if err != nil {
+			writeJSON(w, http.StatusOK, response{Valid: false})
+			return
+		}
+
+		if hashToken(req.Token) != tokenHash {
+			writeJSON(w, http.StatusOK, response{Valid: false})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, response{Valid: true, ExpiresAt: &expiresAt})
+	}
+}
+
+func ConfirmPasswordResetHandler(db authDB) http.HandlerFunc {
+	type request struct {
+		Selector    string `json:"selector"`
+		Token       string `json:"token"`
+		NewPassword string `json:"newPassword"`
+	}
+	type response struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		allowed, err := isPasswordResetAllowed(ctx, db)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{OK: false, Error: "internal_error"})
+			return
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, response{OK: false, Error: "reset_disabled"})
+			return
+		}
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, response{OK: false, Error: "invalid_request"})
+			return
+		}
+
+		if err := validatePassword(req.NewPassword); err != nil {
+			writeJSON(w, http.StatusBadRequest, response{OK: false, Error: "password_too_weak"})
+			return
+		}
+
+		var userID int64
+		var tokenHash string
+		err = db.QueryRow(ctx, "SELECT user_id, token_hash FROM password_reset_tokens WHERE selector = $1 AND expires_at > now()", req.Selector).Scan(&userID, &tokenHash)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, response{OK: false, Error: "invalid_or_expired"})
+			return
+		}
+
+		if hashToken(req.Token) != tokenHash {
+			writeJSON(w, http.StatusBadRequest, response{OK: false, Error: "invalid_or_expired"})
+			return
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{OK: false, Error: "internal_error"})
+			return
+		}
+
+		_, err = db.Exec(ctx, "UPDATE users SET password_hash = $1, token_version = token_version + 1, updated_at = now() WHERE id = $2", string(hashedPassword), userID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{OK: false, Error: "internal_error"})
+			return
+		}
+
+		_, _ = db.Exec(ctx, "DELETE FROM password_reset_tokens WHERE selector = $1", req.Selector)
+
+		writeJSON(w, http.StatusOK, response{OK: true})
 	}
 }

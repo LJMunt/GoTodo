@@ -27,6 +27,7 @@ func Routes(r chi.Router, deps app.Deps) {
 		r.Patch("/{id}", UpdateUserHandler(deps.DB))
 		r.Delete("/{id}", DeleteUserHandler(deps.DB))
 		r.Post("/{id}/logout", LogoutUserHandler(deps.DB))
+		r.Post("/{id}/reset-password", ResetUserPasswordHandler(deps.DB))
 
 		r.Get("/{id}/email-verification", GetUserEmailVerificationHandler(deps.DB))
 		r.Post("/{id}/verify-email", VerifyUserEmailHandler(deps.DB))

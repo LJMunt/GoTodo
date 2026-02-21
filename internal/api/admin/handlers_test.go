@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -191,6 +192,73 @@ func TestEmailVerificationHandlers(t *testing.T) {
 
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
+		}
+	})
+}
+
+func TestResetUserPasswordHandler(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		db := fakeAdminDB{
+			execFn: func(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+				if sql != "UPDATE users SET password_hash = $1, token_version = token_version + 1, updated_at = now() WHERE id = $2" {
+					t.Errorf("unexpected SQL: %s", sql)
+				}
+				if args[1].(int64) != 1 {
+					t.Errorf("expected user id 1, got %v", args[1])
+				}
+				return pgconn.NewCommandTag("UPDATE 1"), nil
+			},
+		}
+
+		body, _ := json.Marshal(map[string]string{"password": "newpassword123"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/1/reset-password", bytes.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "1")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		rec := httptest.NewRecorder()
+		ResetUserPasswordHandler(db).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("InvalidPassword", func(t *testing.T) {
+		db := fakeAdminDB{}
+
+		body, _ := json.Marshal(map[string]string{"password": "short"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/1/reset-password", bytes.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "1")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		rec := httptest.NewRecorder()
+		ResetUserPasswordHandler(db).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+		}
+	})
+
+	t.Run("UserNotFound", func(t *testing.T) {
+		db := fakeAdminDB{
+			execFn: func(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+				return pgconn.NewCommandTag("UPDATE 0"), nil
+			},
+		}
+
+		body, _ := json.Marshal(map[string]string{"password": "newpassword123"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/1/reset-password", bytes.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "1")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		rec := httptest.NewRecorder()
+		ResetUserPasswordHandler(db).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 		}
 	})
 }
