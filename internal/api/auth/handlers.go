@@ -709,6 +709,9 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 	type request struct {
 		Email string `json:"email"`
 	}
+	type response struct {
+		OK bool `json:"ok"`
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -729,13 +732,13 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusOK)
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
 		email := strings.TrimSpace(strings.ToLower(req.Email))
 		if email == "" {
-			w.WriteHeader(http.StatusOK)
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
@@ -751,20 +754,24 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		`, email, ip).Scan(&count)
 
 		if err == nil && count > 0 {
-			w.WriteHeader(http.StatusOK)
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
 		var userID int64
-		err = db.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL", email).Scan(&userID)
+		err = db.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND is_active = true", email).Scan(&userID)
 		if err != nil {
-			w.WriteHeader(http.StatusOK)
+			if !errors.Is(err, pgx.ErrNoRows) {
+				logging.From(ctx).Error().Err(err).Msg("failed to look up user for password reset")
+			}
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
 		selector, validator, tokenHash, err := newPasswordResetToken()
 		if err != nil {
-			w.WriteHeader(http.StatusOK)
+			logging.From(ctx).Error().Err(err).Msg("failed to generate password reset token")
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
@@ -774,7 +781,8 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 			VALUES ($1, $2, $3, $4, $5)
 		`, userID, selector, tokenHash, expiresAt, ip)
 		if err != nil {
-			w.WriteHeader(http.StatusOK)
+			logging.From(ctx).Error().Err(err).Msg("failed to store password reset token")
+			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
 
@@ -798,20 +806,26 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		}
 
 		t, err := template.New("reset").Parse(bodyTpl)
-		if err == nil {
+		if err != nil {
+			logging.From(ctx).Error().Err(err).Msg("failed to parse password reset email template")
+		} else {
 			var b strings.Builder
-			if err := t.Execute(&b, data); err == nil {
+			if err := t.Execute(&b, data); err != nil {
+				logging.From(ctx).Error().Err(err).Msg("failed to execute password reset email template")
+			} else {
 				htmlBody := b.String()
-				_ = sendMail(ctx, db, mail.Message{
+				if err := sendMail(ctx, db, mail.Message{
 					To:      []string{email},
 					Subject: subject,
 					HTML:    htmlBody,
 					Text:    htmlToText(htmlBody),
-				})
+				}); err != nil {
+					logging.From(ctx).Error().Err(err).Msg("failed to send password reset email")
+				}
 			}
 		}
 
-		w.WriteHeader(http.StatusOK)
+		writeJSON(w, http.StatusOK, response{OK: true})
 	}
 }
 
