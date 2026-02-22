@@ -728,3 +728,72 @@ func TestPasswordReset_Disabled(t *testing.T) {
 		t.Errorf("Confirm: expected 403, got %d", rec.Code)
 	}
 }
+
+func TestPasswordReset_TemplateFields(t *testing.T) {
+	var sent mail.Message
+	db := fakeAuthDB{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			if strings.Contains(sql, "FROM password_reset_tokens") && strings.Contains(sql, "count(*)") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*int) = 0
+					return nil
+				}}
+			}
+			if strings.Contains(sql, "FROM users") && strings.Contains(sql, "id") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*int64) = 123
+					return nil
+				}}
+			}
+			if strings.Contains(sql, "FROM config_keys") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					key := args[0].(string)
+					switch key {
+					case "auth.allowReset":
+						*dest[0].(*[]byte) = []byte("true")
+					case "instance.url":
+						*dest[0].(*[]byte) = []byte(`"https://example.com"`)
+					case "mail.reset_password_subject":
+						*dest[0].(*[]byte) = []byte(`"Reset for {{.Email}}"`)
+					case "mail.reset_password_body":
+						*dest[0].(*[]byte) = []byte(`"Go to {{.InstanceURL}} and use {{.ResetURL}}"`)
+					default:
+						*dest[0].(*[]byte) = []byte(`""`)
+					}
+					return nil
+				}}
+			}
+			return fakeRow{scanFn: func(dest ...any) error { return pgx.ErrNoRows }}
+		},
+		execFn: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+			return pgconn.CommandTag{}, nil
+		},
+	}
+
+	// Mock mail sending
+	oldSendMail := sendMail
+	defer func() { sendMail = oldSendMail }()
+	sendMail = func(ctx context.Context, db mailDB, msg mail.Message) error {
+		sent = msg
+		return nil
+	}
+
+	reqBody, _ := json.Marshal(map[string]string{"email": "user@test.com"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/request", bytes.NewBuffer(reqBody))
+	rec := httptest.NewRecorder()
+	RequestPasswordResetHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if sent.Subject != "Reset for user@test.com" {
+		t.Errorf("expected subject 'Reset for user@test.com', got %q", sent.Subject)
+	}
+	if !strings.Contains(sent.HTML, "Go to https://example.com") {
+		t.Errorf("expected HTML to contain InstanceURL, got %q", sent.HTML)
+	}
+	if !strings.Contains(sent.HTML, "use https://example.com/reset-password?selector=") {
+		t.Errorf("expected HTML to contain ResetURL, got %q", sent.HTML)
+	}
+}
