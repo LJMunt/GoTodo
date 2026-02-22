@@ -27,9 +27,10 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 }
 
 type Item struct {
-	Kind         string `json:"kind"` // "task" | "occurrence"
-	TaskID       int64  `json:"task_id"`
-	OccurrenceID *int64 `json:"occurrence_id,omitempty"`
+	Kind            string `json:"kind"` // "task" | "occurrence"
+	TaskID          int64  `json:"task_id"`
+	OccurrenceID    *int64 `json:"occurrence_id,omitempty"`
+	OccurrenceIndex *int64 `json:"occurrence_index,omitempty"`
 
 	ProjectID int64  `json:"project_id"`
 	Title     string `json:"title"`
@@ -135,13 +136,14 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 		//    - non-recurring tasks due in [from,to], incomplete
 		//    - recurring occurrences due in [from,to], incomplete
 		rows2, err := db.Query(ctx,
-			`SELECT kind, task_id, occurrence_id, project_id, title, due_at
+			`SELECT kind, task_id, occurrence_id, occurrence_index, project_id, title, due_at
 			 FROM (
 			   -- Non-recurring tasks
 			   SELECT
 			     'task'::text AS kind,
 			     t.id          AS task_id,
 			     NULL::bigint  AS occurrence_id,
+			     NULL::bigint  AS occurrence_index,
 			     t.project_id  AS project_id,
 			     t.title       AS title,
 			     t.due_at      AS due_at
@@ -163,6 +165,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     'occurrence'::text AS kind,
 			     t.id               AS task_id,
 			     o.id               AS occurrence_id,
+			     o.occurrence_index AS occurrence_index,
 			     t.project_id       AS project_id,
 			     t.title            AS title,
 			     o.due_at           AS due_at
@@ -190,23 +193,25 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 				kind      string
 				taskID    int64
 				occID     *int64
+				occIndex  *int64
 				projectID int64
 				title     string
 				dueAt     time.Time
 			)
 
-			if err := rows2.Scan(&kind, &taskID, &occID, &projectID, &title, &dueAt); err != nil {
+			if err := rows2.Scan(&kind, &taskID, &occID, &occIndex, &projectID, &title, &dueAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read agenda")
 				return
 			}
 
 			out = append(out, Item{
-				Kind:         kind,
-				TaskID:       taskID,
-				OccurrenceID: occID,
-				ProjectID:    projectID,
-				Title:        title,
-				DueAt:        dueAt.UTC().Format(time.RFC3339),
+				Kind:            kind,
+				TaskID:          taskID,
+				OccurrenceID:    occID,
+				OccurrenceIndex: occIndex,
+				ProjectID:       projectID,
+				Title:           title,
+				DueAt:           dueAt.UTC().Format(time.RFC3339),
 			})
 		}
 		if err := rows2.Err(); err != nil {

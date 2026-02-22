@@ -202,8 +202,8 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		// If recurring, ensure the first occurrence exists (history basis)
 		if recurring {
 			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (user_id, task_id, due_at)
-				 VALUES ($1,$2,$3)
+				`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
 				 ON CONFLICT (task_id, due_at) DO NOTHING`,
 				user.ID, t.ID, t.RecurrenceStartAt.UTC(),
 			)
@@ -624,8 +624,8 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 			// Ensure anchor occurrence exists
 			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (user_id, task_id, due_at)
-				 VALUES ($1,$2,$3)
+				`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
 				 ON CONFLICT (task_id, due_at) DO NOTHING`,
 				user.ID, taskID, a,
 			)

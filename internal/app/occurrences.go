@@ -19,10 +19,11 @@ type DBTX interface {
 }
 
 type Occurrence struct {
-	ID          int64
-	TaskID      int64
-	DueAt       time.Time
-	CompletedAt *time.Time
+	ID              int64
+	TaskID          int64
+	OccurrenceIndex int64
+	DueAt           time.Time
+	CompletedAt     *time.Time
 }
 
 // EnsureOccurrencesUpTo generates missing occurrences for a recurring task up to `to` (inclusive).
@@ -58,14 +59,15 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 		anchor = startAt.UTC()
 	}
 
-	// Find the latest existing due_at
+	// Find the latest existing due_at and occurrence_index
 	var lastDue *time.Time
+	var lastIndex *int64
 	if err := db.QueryRow(ctx,
-		`SELECT MAX(due_at)
+		`SELECT MAX(due_at), MAX(occurrence_index)
 		 FROM task_occurrences
 		 WHERE user_id=$1 AND task_id=$2`,
 		userID, taskID,
-	).Scan(&lastDue); err != nil {
+	).Scan(&lastDue, &lastIndex); err != nil {
 		return err
 	}
 
@@ -83,6 +85,7 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 	}
 
 	next := anchor
+	nextIndex := int64(1)
 	if lastDue != nil {
 		next = lastDue.UTC()
 		n, err := step(next)
@@ -91,21 +94,36 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 		}
 		next = n
 	}
+	if lastIndex != nil {
+		nextIndex = *lastIndex + 1
+	}
 	to = to.UTC()
 	count := 0
 
 	// First, generate occurrences up to the requested window `to` (original behavior)
 	for !next.After(to) {
-		_, err := db.Exec(ctx,
-			`INSERT INTO task_occurrences (user_id, task_id, due_at)
-			 VALUES ($1, $2, $3)
+		ct, err := db.Exec(ctx,
+			`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING`,
-			userID, taskID, next,
+			userID, taskID, next, nextIndex,
 		)
 		if err != nil {
 			return err
 		}
-		count++
+		if ct.RowsAffected() > 0 {
+			count++
+			nextIndex++
+		} else {
+			// Already exists, fetch its index to keep nextIndex in sync
+			if err := db.QueryRow(ctx,
+				`SELECT occurrence_index FROM task_occurrences WHERE task_id=$1 AND due_at=$2`,
+				taskID, next,
+			).Scan(&nextIndex); err != nil {
+				return err
+			}
+			nextIndex++
+		}
 
 		n, err := step(next)
 		if err != nil {
@@ -117,16 +135,26 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 	// If fewer than 3 occurrences were generated, extend beyond `to` to reach at least 3
 	for count < 3 {
 		ct, err := db.Exec(ctx,
-			`INSERT INTO task_occurrences (user_id, task_id, due_at)
-			 VALUES ($1, $2, $3)
+			`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING`,
-			userID, taskID, next,
+			userID, taskID, next, nextIndex,
 		)
 		if err != nil {
 			return err
 		}
 		if ct.RowsAffected() > 0 {
 			count++
+			nextIndex++
+		} else {
+			// Already exists, fetch its index to keep nextIndex in sync
+			if err := db.QueryRow(ctx,
+				`SELECT occurrence_index FROM task_occurrences WHERE task_id=$1 AND due_at=$2`,
+				taskID, next,
+			).Scan(&nextIndex); err != nil {
+				return err
+			}
+			nextIndex++
 		}
 		n, err := step(next)
 		if err != nil {
@@ -166,7 +194,7 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 
 func ListTaskOccurrences(ctx context.Context, db DBTX, userID, taskID int64, from, to time.Time) ([]Occurrence, error) {
 	rows, err := db.Query(ctx,
-		`SELECT id, task_id, due_at, completed_at
+		`SELECT id, task_id, occurrence_index, due_at, completed_at
 		 FROM task_occurrences
 		 WHERE user_id=$1 AND task_id=$2
 		   AND due_at >= $3 AND due_at <= $4
@@ -181,7 +209,7 @@ func ListTaskOccurrences(ctx context.Context, db DBTX, userID, taskID int64, fro
 	out := make([]Occurrence, 0, 64)
 	for rows.Next() {
 		var o Occurrence
-		if err := rows.Scan(&o.ID, &o.TaskID, &o.DueAt, &o.CompletedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.TaskID, &o.OccurrenceIndex, &o.DueAt, &o.CompletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -201,9 +229,9 @@ func SetOccurrenceCompleted(ctx context.Context, db DBTX, userID, taskID, occID 
 			`UPDATE task_occurrences
 			 SET completed_at=$1, updated_at=now()
 			 WHERE id=$2 AND task_id=$3 AND user_id=$4
-			 RETURNING id, task_id, due_at, completed_at`,
+			 RETURNING id, task_id, occurrence_index, due_at, completed_at`,
 			now, occID, taskID, userID,
-		).Scan(&out.ID, &out.TaskID, &out.DueAt, &out.CompletedAt)
+		).Scan(&out.ID, &out.TaskID, &out.OccurrenceIndex, &out.DueAt, &out.CompletedAt)
 		if err != nil {
 			return Occurrence{}, err
 		}
@@ -214,9 +242,9 @@ func SetOccurrenceCompleted(ctx context.Context, db DBTX, userID, taskID, occID 
 		`UPDATE task_occurrences
 		 SET completed_at=NULL, updated_at=now()
 		 WHERE id=$1 AND task_id=$2 AND user_id=$3
-		 RETURNING id, task_id, due_at, completed_at`,
+		 RETURNING id, task_id, occurrence_index, due_at, completed_at`,
 		occID, taskID, userID,
-	).Scan(&out.ID, &out.TaskID, &out.DueAt, &out.CompletedAt)
+	).Scan(&out.ID, &out.TaskID, &out.OccurrenceIndex, &out.DueAt, &out.CompletedAt)
 	if err != nil {
 		return Occurrence{}, err
 	}
