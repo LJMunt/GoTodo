@@ -93,6 +93,8 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 	}
 	to = to.UTC()
 	count := 0
+
+	// First, generate occurrences up to the requested window `to` (original behavior)
 	for !next.After(to) {
 		_, err := db.Exec(ctx,
 			`INSERT INTO task_occurrences (user_id, task_id, due_at)
@@ -110,6 +112,30 @@ func EnsureOccurrencesUpTo(ctx context.Context, db DBTX, userID, taskID int64, t
 			return err
 		}
 		next = n
+	}
+
+	// If fewer than 3 occurrences were generated, extend beyond `to` to reach at least 3
+	for count < 3 {
+		ct, err := db.Exec(ctx,
+			`INSERT INTO task_occurrences (user_id, task_id, due_at)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (task_id, due_at) DO NOTHING`,
+			userID, taskID, next,
+		)
+		if err != nil {
+			return err
+		}
+		if ct.RowsAffected() > 0 {
+			count++
+		}
+		n, err := step(next)
+		if err != nil {
+			return err
+		}
+		next = n
+		if count > 100 { // safety guard
+			break
+		}
 	}
 
 	if count > 0 {

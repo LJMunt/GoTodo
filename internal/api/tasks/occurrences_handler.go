@@ -90,7 +90,7 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		now := time.Now().UTC()
 		from := now.AddDate(0, 0, -30)
-		to := now.AddDate(0, 0, 60)
+		to := now.AddDate(0, 0, 120)
 		if fromQ != nil {
 			from = fromQ.UTC()
 		}
