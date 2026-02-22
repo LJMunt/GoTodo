@@ -29,7 +29,12 @@ func RequestLogger(base zerolog.Logger) func(next http.Handler) http.Handler {
 
 			next.ServeHTTP(ww, r)
 
-			l.Info().
+			event := l.Info()
+			if r.Method == http.MethodGet && r.URL.Path == "/api/v1/health" {
+				event = l.Debug()
+			}
+
+			event.
 				Int("status", ww.Status()).
 				Dur("duration", time.Since(start)).
 				Int("bytes", ww.BytesWritten()).
