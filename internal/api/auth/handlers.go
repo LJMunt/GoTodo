@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -549,7 +548,7 @@ func createAndSendVerification(ctx context.Context, db authDB, r *http.Request, 
 	return sendMail(ctx, db, msg)
 }
 
-func renderTemplate(name, tpl string, data verificationTemplateData) (string, error) {
+func renderTemplate(name, tpl string, data any) (string, error) {
 	t, err := template.New(name).Option("missingkey=zero").Parse(tpl)
 	if err != nil {
 		return "", err
@@ -754,6 +753,7 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		`, email, ip).Scan(&count)
 
 		if err == nil && count > 0 {
+			logging.From(ctx).Info().Str("email", email).Str("ip", ip).Msg("password reset rate limited")
 			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}
@@ -787,41 +787,46 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		}
 
 		instanceURL, _ := getConfigString(ctx, db, "instance.url")
-		subject, _ := getConfigString(ctx, db, "mail.reset_password_subject")
+		subjectTpl, _ := getConfigString(ctx, db, "mail.reset_password_subject")
 		bodyTpl, _ := getConfigString(ctx, db, "mail.reset_password_body")
 
-		if subject == "" {
-			subject = "Reset your password"
+		if subjectTpl == "" {
+			subjectTpl = "Reset your password"
 		}
 		if bodyTpl == "" {
 			bodyTpl = "Hi,<br><br>You requested a password reset. Please click the link below to set a new password:<br><a href=\"{{.ResetURL}}\">Reset password</a><br><br>If you did not request this, you can safely ignore this email."
 		}
 
-		resetURL := fmt.Sprintf("%s/reset-password?selector=%s&token=%s", strings.TrimSuffix(instanceURL, "/"), selector, validator)
+		resetURL := strings.TrimRight(instanceURL, "/") + "/reset-password?selector=" + selector + "&token=" + validator
 
 		data := struct {
-			ResetURL string
+			ResetURL    string
+			Email       string
+			InstanceURL string
 		}{
-			ResetURL: resetURL,
+			ResetURL:    resetURL,
+			Email:       email,
+			InstanceURL: instanceURL,
 		}
 
-		t, err := template.New("reset").Parse(bodyTpl)
+		renderedSubject, err := renderTemplate("reset_subject", subjectTpl, data)
 		if err != nil {
-			logging.From(ctx).Error().Err(err).Msg("failed to parse password reset email template")
+			logging.From(ctx).Error().Err(err).Msg("failed to render password reset subject template")
+			renderedSubject = subjectTpl // Fallback to raw template if rendering fails
+		}
+
+		renderedBody, err := renderTemplate("reset_body", bodyTpl, data)
+		if err != nil {
+			logging.From(ctx).Error().Err(err).Msg("failed to render password reset body template")
+			// If body rendering fails, we don't send the email
 		} else {
-			var b strings.Builder
-			if err := t.Execute(&b, data); err != nil {
-				logging.From(ctx).Error().Err(err).Msg("failed to execute password reset email template")
-			} else {
-				htmlBody := b.String()
-				if err := sendMail(ctx, db, mail.Message{
-					To:      []string{email},
-					Subject: subject,
-					HTML:    htmlBody,
-					Text:    htmlToText(htmlBody),
-				}); err != nil {
-					logging.From(ctx).Error().Err(err).Msg("failed to send password reset email")
-				}
+			if err := sendMail(ctx, db, mail.Message{
+				To:      []string{email},
+				Subject: renderedSubject,
+				HTML:    renderedBody,
+				Text:    htmlToText(renderedBody),
+			}); err != nil {
+				logging.From(ctx).Error().Err(err).Msg("failed to send password reset email")
 			}
 		}
 
