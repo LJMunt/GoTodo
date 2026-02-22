@@ -226,13 +226,16 @@ components:
         task_id:
           type: integer
           format: int64
+        occurrence_index:
+          type: integer
+          format: int64
         due_at:
           type: string
           format: date-time
         completed_at:
           oneOf: [{type: string}, {type: "null"}]
           format: date-time
-      required: [id, task_id, due_at]
+      required: [id, task_id, occurrence_index, due_at]
 
     AgendaItem:
       type: object
@@ -244,6 +247,9 @@ components:
           type: integer
           format: int64
         occurrence_id:
+          oneOf: [{type: integer}, {type: "null"}]
+          format: int64
+        occurrence_index:
           oneOf: [{type: integer}, {type: "null"}]
           format: int64
         project_id:

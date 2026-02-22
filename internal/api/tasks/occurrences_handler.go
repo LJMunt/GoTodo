@@ -17,10 +17,11 @@ import (
 )
 
 type occurrenceResponse struct {
-	ID          int64      `json:"id"`
-	TaskID      int64      `json:"task_id"`
-	DueAt       time.Time  `json:"due_at"`
-	CompletedAt *time.Time `json:"completed_at"`
+	ID              int64      `json:"id"`
+	TaskID          int64      `json:"task_id"`
+	OccurrenceIndex int64      `json:"occurrence_index"`
+	DueAt           time.Time  `json:"due_at"`
+	CompletedAt     *time.Time `json:"completed_at"`
 }
 
 func parseInt64URLParam(r *http.Request, key string) (int64, error) {
@@ -90,7 +91,7 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		now := time.Now().UTC()
 		from := now.AddDate(0, 0, -30)
-		to := now.AddDate(0, 0, 60)
+		to := now.AddDate(0, 0, 120)
 		if fromQ != nil {
 			from = fromQ.UTC()
 		}
@@ -131,10 +132,11 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		out := make([]occurrenceResponse, 0, len(occ))
 		for _, o := range occ {
 			out = append(out, occurrenceResponse{
-				ID:          o.ID,
-				TaskID:      o.TaskID,
-				DueAt:       o.DueAt,
-				CompletedAt: o.CompletedAt,
+				ID:              o.ID,
+				TaskID:          o.TaskID,
+				OccurrenceIndex: o.OccurrenceIndex,
+				DueAt:           o.DueAt,
+				CompletedAt:     o.CompletedAt,
 			})
 		}
 
@@ -205,10 +207,11 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 		_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, time.Now().UTC().AddDate(0, 0, 60))
 
 		writeJSON(w, http.StatusOK, occurrenceResponse{
-			ID:          updated.ID,
-			TaskID:      updated.TaskID,
-			DueAt:       updated.DueAt,
-			CompletedAt: updated.CompletedAt,
+			ID:              updated.ID,
+			TaskID:          updated.TaskID,
+			OccurrenceIndex: updated.OccurrenceIndex,
+			DueAt:           updated.DueAt,
+			CompletedAt:     updated.CompletedAt,
 		})
 	}
 }

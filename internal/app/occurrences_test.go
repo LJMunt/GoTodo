@@ -95,12 +95,13 @@ func TestEnsureOccurrencesUpTo_Daily(t *testing.T) {
 					},
 				}
 			}
-			if sql == `SELECT MAX(due_at)
+			if sql == `SELECT MAX(due_at), MAX(occurrence_index)
 		 FROM task_occurrences
 		 WHERE user_id=$1 AND task_id=$2` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**time.Time)) = nil // No previous occurrences
+						*(dest[1].(**int64)) = nil
 						return nil
 					},
 				}
@@ -108,8 +109,8 @@ func TestEnsureOccurrencesUpTo_Daily(t *testing.T) {
 			return &MockRow{ScanFunc: func(dest ...any) error { return nil }}
 		},
 		ExecFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at)
-			 VALUES ($1, $2, $3)
+			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING` {
 				inserted = append(inserted, args[2].(time.Time))
 			}
@@ -158,12 +159,13 @@ func TestEnsureOccurrencesUpTo_Monthly(t *testing.T) {
 					},
 				}
 			}
-			if sql == `SELECT MAX(due_at)
+			if sql == `SELECT MAX(due_at), MAX(occurrence_index)
 		 FROM task_occurrences
 		 WHERE user_id=$1 AND task_id=$2` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**time.Time)) = nil
+						*(dest[1].(**int64)) = nil
 						return nil
 					},
 				}
@@ -171,8 +173,8 @@ func TestEnsureOccurrencesUpTo_Monthly(t *testing.T) {
 			return &MockRow{ScanFunc: func(dest ...any) error { return nil }}
 		},
 		ExecFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at)
-			 VALUES ($1, $2, $3)
+			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING` {
 				inserted = append(inserted, args[2].(time.Time))
 			}
@@ -255,6 +257,7 @@ func TestSetOccurrenceCompleted(t *testing.T) {
 				ScanFunc: func(dest ...any) error {
 					*(dest[0].(*int64)) = 100 // occID
 					*(dest[1].(*int64)) = 1   // taskID
+					*(dest[2].(*int64)) = 5   // occurrence_index
 					return nil
 				},
 			}
