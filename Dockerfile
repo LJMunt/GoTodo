@@ -38,7 +38,7 @@ COPY internal/db/migrations ./internal/db/migrations
 COPY internal/db/restore_languages.sql ./internal/db/restore_languages.sql
 
 # Set environment variables
-ENV PORT=8080
+ENV PORT=8081
 ENV MIGRATIONS_PATH=/app/internal/db/migrations
 
 EXPOSE 8081

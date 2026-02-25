@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "canary"]
+    tags: ["v*"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "canary"]
 
 jobs:
   build:
@@ -43,7 +44,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.24"
 
       - name: Download dependencies
         run: go mod download
@@ -103,9 +104,37 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set lowercase image name
-        id: vars
         run: |
           echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "SHA_SHORT=${GITHUB_SHA::12}" >> $GITHUB_ENV
+
+      - name: Compute Docker tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REF="${GITHUB_REF}"
+          TAGS=()
+
+          if [[ "${REF}" == "refs/heads/canary" ]]; then
+            TAGS+=("${IMAGE_NAME}:canary")
+            TAGS+=("${IMAGE_NAME}:canary-${SHA_SHORT}")
+          elif [[ "${REF}" == "refs/heads/main" ]]; then
+            TAGS+=("${IMAGE_NAME}:latest")
+            TAGS+=("${IMAGE_NAME}:main-${SHA_SHORT}")
+          elif [[ "${REF}" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/}"
+            TAGS+=("${IMAGE_NAME}:${VERSION}")
+            TAGS+=("${IMAGE_NAME}:latest")
+          else
+            echo "No tags for ref: ${REF}"
+          fi
+
+          printf '%s\n' "${TAGS[@]}" > tags.txt
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          cat tags.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -119,9 +148,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (and maybe push) Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-              ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
