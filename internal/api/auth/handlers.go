@@ -30,7 +30,8 @@ type credentials struct {
 }
 
 type authResponse struct {
-	Token string `json:"token"`
+	Token       string `json:"token"`
+	MFARequired bool   `json:"mfa_required,omitzero"`
 }
 
 type userCreatedResponse struct {
@@ -248,14 +249,15 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			isAdmin         bool
 			emailVerifiedAt *time.Time
 			tokenVersion    int64
+			totpEnabled     bool
 		)
 
 		err := db.QueryRow(ctx,
-			`SELECT id, password_hash, is_active, is_admin, email_verified_at, token_version
+			`SELECT id, password_hash, is_active, is_admin, email_verified_at, token_version, totp_enabled
 			 FROM users
 			 WHERE email=$1`,
 			email,
-		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt, &tokenVersion)
+		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt, &tokenVersion, &totpEnabled)
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
@@ -289,6 +291,34 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		_, _ = db.Exec(ctx, "UPDATE users SET last_login = now() WHERE id = $1", id)
 
 		l.Info().Int64("user_id", id).Str("email", email).Msg("user login successful")
+
+		if totpEnabled {
+			mfaToken, jti, err := authmw.SignMFAToken(id, tokenVersion)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to sign mfa token")
+				return
+			}
+
+			jtiHash := hashToken(jti)
+			expiresAt := time.Now().Add(5 * time.Minute)
+			ip := extractIP(r.RemoteAddr).String()
+
+			_, err = db.Exec(ctx,
+				`INSERT INTO mfa_challenges (jti_hash, user_id, expires_at, ip)
+				 VALUES ($1, $2, $3, $4)`,
+				jtiHash, id, expiresAt, ip,
+			)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to store mfa challenge")
+				return
+			}
+
+			writeJSON(w, http.StatusOK, authResponse{
+				Token:       mfaToken,
+				MFARequired: true,
+			})
+			return
+		}
 
 		token, err := authmw.SignToken(id, tokenVersion)
 		if err != nil {

@@ -242,6 +242,7 @@ func TestLoginHandler_Success(t *testing.T) {
 					*dest[3].(*bool) = false
 					*dest[4].(**time.Time) = &now
 					*dest[5].(*int64) = 0
+					*dest[6].(*bool) = false
 					return nil
 				},
 			}
@@ -264,6 +265,67 @@ func TestLoginHandler_Success(t *testing.T) {
 	var resp authResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("expected token to be set")
+	}
+}
+
+func TestLoginHandler_MFARequired(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("JWT_ISSUER", "gotodo-test")
+	t.Setenv("JWT_AUDIENCE", "gotodo-test-client")
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("Password123!"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	db := fakeAuthDB{
+		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'" {
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*[]byte) = []byte("false")
+						return nil
+					},
+				}
+			}
+			return fakeRow{
+				scanFn: func(dest ...any) error {
+					now := time.Now()
+					*dest[0].(*int64) = 99
+					*dest[1].(*string) = string(hash)
+					*dest[2].(*bool) = true
+					*dest[3].(*bool) = false
+					*dest[4].(**time.Time) = &now
+					*dest[5].(*int64) = 0
+					*dest[6].(*bool) = true // MFA ENABLED
+					return nil
+				},
+			}
+		},
+		execFn: func(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+			return pgconn.CommandTag{}, nil
+		},
+	}
+
+	body := `{"email":"user@example.com","password":"Password123!"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	LoginHandler(db).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp authResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.MFARequired {
+		t.Fatal("expected MFARequired to be true")
 	}
 	if resp.Token == "" {
 		t.Fatal("expected token to be set")
@@ -298,6 +360,7 @@ func TestLoginHandler_UnverifiedEmailBlocked(t *testing.T) {
 					*dest[3].(*bool) = false
 					*dest[4].(**time.Time) = nil
 					*dest[5].(*int64) = 0
+					*dest[6].(*bool) = false
 					return nil
 				},
 			}
