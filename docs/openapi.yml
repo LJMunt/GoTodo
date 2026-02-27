@@ -325,7 +325,9 @@ components:
               type: boolean
             allowReset:
               type: boolean
-          required: [allowSignup, requireEmailVerification, allowReset]
+            allowTOTP:
+              type: boolean
+          required: [allowSignup, requireEmailVerification, allowReset, allowTOTP]
         instance:
           type: object
           properties:

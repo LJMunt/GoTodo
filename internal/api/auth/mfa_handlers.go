@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	authmw "GoToDo/internal/auth"
@@ -91,6 +90,17 @@ func MfaTotpVerifyHandler(db authDB) http.HandlerFunc {
 
 		if failCount >= 5 {
 			writeErr(w, http.StatusUnauthorized, "too many failed attempts")
+			return
+		}
+
+		// Check if TOTP is allowed system-wide
+		allowTOTP, err := isTOTPAllowed(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
+			return
+		}
+		if !allowTOTP {
+			writeErr(w, http.StatusForbidden, "TOTP is currently disabled")
 			return
 		}
 
@@ -214,13 +224,14 @@ func MfaTotpStartHandler(db authDB) http.HandlerFunc {
 		defer cancel()
 
 		// Check if TOTP is allowed
-		var val string
-		err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'").Scan(&val)
-		if err == nil {
-			if strings.Trim(val, "\"") == "false" {
-				writeErr(w, http.StatusForbidden, "TOTP is currently disabled")
-				return
-			}
+		allowTOTP, err := isTOTPAllowed(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
+			return
+		}
+		if !allowTOTP {
+			writeErr(w, http.StatusForbidden, "TOTP is currently disabled")
+			return
 		}
 
 		var email string
@@ -288,8 +299,19 @@ func MfaTotpConfirmHandler(db authDB) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
+		// Check if TOTP is allowed
+		allowTOTP, err := isTOTPAllowed(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
+			return
+		}
+		if !allowTOTP {
+			writeErr(w, http.StatusForbidden, "TOTP is currently disabled")
+			return
+		}
+
 		var totpSecretEnc *string
-		err := db.QueryRow(ctx, "SELECT totp_secret_enc FROM users WHERE id = $1", user.ID).Scan(&totpSecretEnc)
+		err = db.QueryRow(ctx, "SELECT totp_secret_enc FROM users WHERE id = $1", user.ID).Scan(&totpSecretEnc)
 		if err != nil || totpSecretEnc == nil {
 			writeErr(w, http.StatusBadRequest, "totp setup not started")
 			return

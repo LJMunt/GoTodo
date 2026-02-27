@@ -28,7 +28,7 @@ func TestMfaTotpStartHandler(t *testing.T) {
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
 			if strings.Contains(sql, "config_keys") {
 				return fakeRow{scanFn: func(dest ...any) error {
-					*dest[0].(*string) = "true"
+					*dest[0].(*[]byte) = []byte("true")
 					return nil
 				}}
 			}
@@ -82,6 +82,12 @@ func TestMfaTotpConfirmHandler(t *testing.T) {
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if strings.Contains(sql, "config_keys") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*[]byte) = []byte("true")
+					return nil
+				}}
+			}
 			return fakeRow{scanFn: func(dest ...any) error {
 				*dest[0].(**string) = &encryptedSecret
 				return nil
@@ -125,6 +131,12 @@ func TestMfaTotpVerifyHandler_Success(t *testing.T) {
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+			if strings.Contains(sql, "config_keys") {
+				return fakeRow{scanFn: func(dest ...any) error {
+					*dest[0].(*[]byte) = []byte("true")
+					return nil
+				}}
+			}
 			if strings.Contains(sql, "JOIN users") {
 				expiresAt := time.Now().Add(5 * time.Minute).UTC()
 				return fakeRow{scanFn: func(dest ...any) error {

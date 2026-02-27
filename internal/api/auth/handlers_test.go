@@ -225,10 +225,18 @@ func TestLoginHandler_Success(t *testing.T) {
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
-			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'" {
+			switch sql {
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'":
 				return fakeRow{
 					scanFn: func(dest ...any) error {
 						*dest[0].(*[]byte) = []byte("false")
+						return nil
+					},
+				}
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'":
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*[]byte) = []byte("true")
 						return nil
 					},
 				}
@@ -283,10 +291,18 @@ func TestLoginHandler_MFARequired(t *testing.T) {
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
-			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'" {
+			switch sql {
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'":
 				return fakeRow{
 					scanFn: func(dest ...any) error {
 						*dest[0].(*[]byte) = []byte("false")
+						return nil
+					},
+				}
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'":
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*[]byte) = []byte("true")
 						return nil
 					},
 				}
@@ -344,7 +360,15 @@ func TestLoginHandler_UnverifiedEmailBlocked(t *testing.T) {
 
 	db := fakeAuthDB{
 		queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
-			if sql == "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'" {
+			switch sql {
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'":
+				return fakeRow{
+					scanFn: func(dest ...any) error {
+						*dest[0].(*[]byte) = []byte("true")
+						return nil
+					},
+				}
+			case "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'":
 				return fakeRow{
 					scanFn: func(dest ...any) error {
 						*dest[0].(*[]byte) = []byte("true")

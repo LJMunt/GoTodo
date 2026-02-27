@@ -292,7 +292,13 @@ func LoginHandler(db authDB) http.HandlerFunc {
 
 		l.Info().Int64("user_id", id).Str("email", email).Msg("user login successful")
 
-		if totpEnabled {
+		allowTOTP, err := isTOTPAllowed(ctx, db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
+			return
+		}
+
+		if totpEnabled && allowTOTP {
 			mfaToken, jti, err := authmw.SignMFAToken(id, tokenVersion)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to sign mfa token")
@@ -481,6 +487,22 @@ func ResendVerificationHandler(db authDB) http.HandlerFunc {
 func requireEmailVerification(ctx context.Context, db authDB) (bool, error) {
 	var raw []byte
 	if err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.requireEmailVerification'").Scan(&raw); err != nil {
+		return false, err
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return false, err
+	}
+	return v, nil
+}
+
+func isTOTPAllowed(ctx context.Context, db authDB) (bool, error) {
+	var raw []byte
+	err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'").Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil // default
+		}
 		return false, err
 	}
 	var v bool
