@@ -12,12 +12,22 @@ import (
 )
 
 type Claims struct {
-	UserID       int64 `json:"user_id"`
-	TokenVersion int64 `json:"token_version"`
+	UserID       int64    `json:"user_id"`
+	TokenVersion int64    `json:"token_version"`
+	Type         string   `json:"typ,omitzero"`
+	MFARequired  bool     `json:"mfa_required,omitzero"`
+	MFAMethods   []string `json:"mfa_methods,omitzero"`
+	AMR          []string `json:"amr,omitzero"`
+	MFA          bool     `json:"mfa,omitzero"`
+	MFAAt        int64    `json:"mfa_at,omitzero"`
 	jwt.RegisteredClaims
 }
 
 func SignToken(userID int64, tokenVersion int64) (string, error) {
+	return SignAccessToken(userID, tokenVersion, false)
+}
+
+func SignAccessToken(userID int64, tokenVersion int64, mfa bool) (string, error) {
 	secret, issuer, audience, err := jwtConfig()
 	if err != nil {
 		return "", err
@@ -36,20 +46,69 @@ func SignToken(userID int64, tokenVersion int64) (string, error) {
 		return "", err
 	}
 
+	amr := []string{"pwd"}
+	if mfa {
+		amr = append(amr, "mfa")
+	}
+
+	var mfaAt int64
+	if mfa {
+		mfaAt = time.Now().Unix()
+	}
+
 	claims := Claims{
 		UserID:       userID,
 		TokenVersion: tokenVersion,
+		Type:         "access",
+		AMR:          amr,
+		MFA:          mfa,
+		MFAAt:        mfaAt,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    issuer,
 			Audience:  jwt.ClaimStrings{audience},
 			ID:        jti,
+			Subject:   fmt.Sprintf("%d", userID),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}
+
+func SignMFAToken(userID int64, tokenVersion int64) (string, string, error) {
+	secret, issuer, audience, err := jwtConfig()
+	if err != nil {
+		return "", "", err
+	}
+
+	ttl := 5 * time.Minute
+
+	jti, err := newJTI()
+	if err != nil {
+		return "", "", err
+	}
+
+	claims := Claims{
+		UserID:       userID,
+		TokenVersion: tokenVersion,
+		Type:         "mfa",
+		MFARequired:  true,
+		MFAMethods:   []string{"totp"},
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    issuer,
+			Audience:  jwt.ClaimStrings{audience},
+			ID:        jti,
+			Subject:   fmt.Sprintf("%d", userID),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(secret))
+	return signed, jti, err
 }
 
 func ParseToken(tokenString string) (*Claims, error) {

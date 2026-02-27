@@ -215,7 +215,9 @@ components:
             language:
               type: string
           required: [theme, showCompletedDefault, language]
-      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings]
+        mfa_enabled:
+          type: boolean
+      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings, mfa_enabled]
 
     Occurrence:
       type: object
@@ -325,7 +327,9 @@ components:
               type: boolean
             allowReset:
               type: boolean
-          required: [allowSignup, requireEmailVerification, allowReset]
+            allowTOTP:
+              type: boolean
+          required: [allowSignup, requireEmailVerification, allowReset, allowTOTP]
         instance:
           type: object
           properties:
@@ -608,6 +612,8 @@ paths:
                 properties:
                   token:
                     type: string
+                  mfa_required:
+                    type: boolean
         "400":
           description: Invalid request
           content:
@@ -634,6 +640,50 @@ paths:
                 error: "email_not_verified"
                 message: "Please verify your email before logging in."
                 retryable: false
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/mfa/totp:
+    post:
+      tags: [Auth]
+      summary: Verify TOTP code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mfa_token:
+                  type: string
+                  description: MFA token received from login
+                code:
+                  type: string
+                  description: TOTP code from user's app
+              required: [mfa_token, code]
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          description: Invalid MFA token or TOTP code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         "500":
           $ref: '#/components/responses/InternalServerError'
 
@@ -1027,6 +1077,93 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/mfa/totp/start:
+    post:
+      tags: [MFA]
+      summary: Start TOTP enrollment
+      description: Generates a new TOTP secret for the authenticated user.
+      responses:
+        "200":
+          description: TOTP secret generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret:
+                    type: string
+                    description: The base32 encoded secret.
+                  url:
+                    type: string
+                    description: The otpauth URL for QR codes.
+                required: [secret, url]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/mfa/totp/confirm:
+    post:
+      tags: [MFA]
+      summary: Confirm TOTP enrollment
+      description: Verifies a code from the user's app to confirm and enable TOTP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: TOTP code from user's app
+              required: [code]
+      responses:
+        "200":
+          description: TOTP confirmed and enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  backup_codes:
+                    type: array
+                    items:
+                      type: string
+                required: [status, backup_codes]
+        "400":
+          description: Invalid code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/mfa/totp/disable:
+    post:
+      tags: [MFA]
+      summary: Disable TOTP
+      description: Disables TOTP for the authenticated user.
+      responses:
+        "200":
+          description: TOTP disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
 
   /api/v1/projects:
     get:

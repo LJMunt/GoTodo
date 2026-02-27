@@ -18,6 +18,7 @@ func TestGetConfigStatusHandler(t *testing.T) {
 					{"auth.allowSignup", "false"},
 					{"auth.requireEmailVerification", "true"},
 					{"auth.allowReset", "true"},
+					{"auth.allowTOTP", "true"},
 					{"instance.readOnly", "false"},
 				},
 			}, nil
@@ -46,6 +47,9 @@ func TestGetConfigStatusHandler(t *testing.T) {
 	}
 	if resp.Auth.AllowReset != true {
 		t.Errorf("expected allowReset true, got %v", resp.Auth.AllowReset)
+	}
+	if resp.Auth.AllowTOTP != true {
+		t.Errorf("expected allowTOTP true, got %v", resp.Auth.AllowTOTP)
 	}
 	if resp.Instance.ReadOnly != false {
 		t.Errorf("expected readOnly false, got %v", resp.Instance.ReadOnly)
