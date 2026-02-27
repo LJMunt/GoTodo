@@ -1097,6 +1097,7 @@ paths:
                   url:
                     type: string
                     description: The otpauth URL for QR codes.
+                required: [secret, url]
         "401":
           $ref: '#/components/responses/Unauthorized'
         "500":
