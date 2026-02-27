@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -94,7 +95,9 @@ func TestMfaTotpConfirmHandler(t *testing.T) {
 			}}
 		},
 		execFn: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
-			if !strings.Contains(sql, "UPDATE users") {
+			if !strings.Contains(sql, "UPDATE users") &&
+				!strings.Contains(sql, "DELETE FROM backup_codes") &&
+				!strings.Contains(sql, "INSERT INTO backup_codes") {
 				t.Errorf("unexpected SQL: %s", sql)
 			}
 			return pgconn.CommandTag{}, nil
@@ -105,6 +108,36 @@ func TestMfaTotpConfirmHandler(t *testing.T) {
 	body := map[string]string{"code": code}
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/mfa/totp/confirm", bytes.NewBuffer(b))
+	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 1}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d. Body: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp totpConfirmResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.BackupCodes) != 10 {
+		t.Fatalf("expected 10 backup codes, got %d", len(resp.BackupCodes))
+	}
+}
+
+func TestMfaTotpDisableHandler(t *testing.T) {
+	db := fakeAuthDB{
+		execFn: func(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+			if !strings.Contains(sql, "UPDATE users") && !strings.Contains(sql, "DELETE FROM backup_codes") {
+				t.Errorf("unexpected SQL: %s", sql)
+			}
+			return pgconn.CommandTag{}, nil
+		},
+	}
+
+	handler := MfaTotpDisableHandler(db)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mfa/totp/disable", nil)
 	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 1}))
 
 	rec := httptest.NewRecorder()
@@ -142,9 +175,9 @@ func TestMfaTotpVerifyHandler_Success(t *testing.T) {
 				return fakeRow{scanFn: func(dest ...any) error {
 					*dest[0].(*int64) = 1 // challengeUserID
 					*dest[1].(*time.Time) = expiresAt
-					*dest[2].(**time.Time) = nil     // consumedAt
-					*dest[3].(*int) = 0              // failCount
-					*dest[4].(*string) = "192.0.2.1" // challengeIP
+					*dest[2].(**time.Time) = nil                              // consumedAt
+					*dest[3].(*int) = 0                                       // failCount
+					*dest[4].(*netip.Addr) = netip.MustParseAddr("192.0.2.1") // challengeIP
 					*dest[5].(**string) = &encryptedSecret
 					*dest[6].(**int64) = nil // totpLastUsedStep
 					*dest[7].(*int64) = 0    // tokenVersion

@@ -48,6 +48,7 @@ func TestMeHandler_Success(t *testing.T) {
 					*dest[6].(*string) = "system"
 					*dest[7].(*bool) = false
 					*dest[8].(*string) = "en"
+					*dest[9].(*bool) = false
 					return nil
 				},
 			}
@@ -79,6 +80,9 @@ func TestMeHandler_Success(t *testing.T) {
 	}
 	if resp["is_active"] != true {
 		t.Fatalf("unexpected is_active %v", resp["is_active"])
+	}
+	if resp["mfa_enabled"] != false {
+		t.Fatalf("unexpected mfa_enabled %v", resp["mfa_enabled"])
 	}
 	if v, ok := resp["email_verified_at"]; !ok || v != nil {
 		t.Fatalf("unexpected email_verified_at %v", v)

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"text/template"
@@ -294,6 +295,7 @@ func LoginHandler(db authDB) http.HandlerFunc {
 
 		allowTOTP, err := isTOTPAllowed(ctx, db)
 		if err != nil {
+			l.Error().Err(err).Msg("failed to read mfa settings")
 			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
 			return
 		}
@@ -301,13 +303,14 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		if totpEnabled && allowTOTP {
 			mfaToken, jti, err := authmw.SignMFAToken(id, tokenVersion)
 			if err != nil {
+				l.Error().Err(err).Msg("failed to sign mfa token")
 				writeErr(w, http.StatusInternalServerError, "failed to sign mfa token")
 				return
 			}
 
 			jtiHash := hashToken(jti)
 			expiresAt := time.Now().Add(5 * time.Minute)
-			ip := extractIP(r.RemoteAddr).String()
+			ip := extractIP(r.RemoteAddr)
 
 			_, err = db.Exec(ctx,
 				`INSERT INTO mfa_challenges (jti_hash, user_id, expires_at, ip)
@@ -315,10 +318,12 @@ func LoginHandler(db authDB) http.HandlerFunc {
 				jtiHash, id, expiresAt, ip,
 			)
 			if err != nil {
+				l.Error().Err(err).Str("jti_hash", jtiHash).Msg("failed to store mfa challenge")
 				writeErr(w, http.StatusInternalServerError, "failed to store mfa challenge")
 				return
 			}
 
+			l.Info().Int64("user_id", id).Str("jti_hash", jtiHash).Msg("mfa challenge created")
 			writeJSON(w, http.StatusOK, authResponse{
 				Token:       mfaToken,
 				MFARequired: true,
@@ -626,11 +631,16 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func extractIP(addr string) net.IP {
+func extractIP(addr string) netip.Addr {
 	if host, _, err := net.SplitHostPort(addr); err == nil {
-		return net.ParseIP(host)
+		if ip, err := netip.ParseAddr(host); err == nil {
+			return ip
+		}
 	}
-	return net.ParseIP(addr)
+	if ip, err := netip.ParseAddr(addr); err == nil {
+		return ip
+	}
+	return netip.Addr{}
 }
 
 func htmlToText(html string) string {
@@ -793,7 +803,7 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		ip := extractIP(r.RemoteAddr).String()
+		ip := extractIP(r.RemoteAddr)
 
 		// Rate limit: check if a token was created in the last 15 minutes for this email or IP
 		var count int
@@ -805,7 +815,7 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		`, email, ip).Scan(&count)
 
 		if err == nil && count > 0 {
-			logging.From(ctx).Info().Str("email", email).Str("ip", ip).Msg("password reset rate limited")
+			logging.From(ctx).Info().Str("email", email).Str("ip", ip.String()).Msg("password reset rate limited")
 			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}

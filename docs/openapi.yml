@@ -215,7 +215,9 @@ components:
             language:
               type: string
           required: [theme, showCompletedDefault, language]
-      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings]
+        mfa_enabled:
+          type: boolean
+      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings, mfa_enabled]
 
     Occurrence:
       type: object
@@ -1126,6 +1128,11 @@ paths:
                 properties:
                   status:
                     type: string
+                  backup_codes:
+                    type: array
+                    items:
+                      type: string
+                required: [status, backup_codes]
         "400":
           description: Invalid code
           content:
