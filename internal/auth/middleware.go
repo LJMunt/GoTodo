@@ -15,12 +15,14 @@ type ctxKey struct{}
 var userKey ctxKey
 
 type User struct {
-	ID             int64
-	PublicID       string
-	IsAdmin        bool
-	TokenID        string
-	TokenExpiresAt time.Time
-	TokenVersion   int64
+	ID                int64
+	PublicID          string
+	IsAdmin           bool
+	WorkspaceID       int64
+	WorkspacePublicID string
+	TokenID           string
+	TokenExpiresAt    time.Time
+	TokenVersion      int64
 }
 
 type apiError struct {
@@ -97,10 +99,15 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 			var isActive bool
 			var publicID string
 			var tokenVersion int64
+			var workspaceID int64
+			var workspacePublicID string
 			err = db.QueryRow(ctx,
-				`SELECT is_admin, is_active, public_id, token_version FROM users WHERE id=$1`,
+				`SELECT u.is_admin, u.is_active, u.public_id, u.token_version, w.id, w.public_id 
+				 FROM users u 
+				 LEFT JOIN workspaces w ON w.user_id = u.id AND w.type = 'user'
+				 WHERE u.id=$1`,
 				claims.UserID,
-			).Scan(&isAdmin, &isActive, &publicID, &tokenVersion)
+			).Scan(&isAdmin, &isActive, &publicID, &tokenVersion, &workspaceID, &workspacePublicID)
 
 			if err != nil || !isActive {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
@@ -112,12 +119,14 @@ func RequireAuth(db dbExecutor) func(http.Handler) http.Handler {
 			}
 
 			user := User{
-				ID:             claims.UserID,
-				IsAdmin:        isAdmin,
-				PublicID:       publicID,
-				TokenID:        claims.ID,
-				TokenExpiresAt: claims.ExpiresAt.Time,
-				TokenVersion:   tokenVersion,
+				ID:                claims.UserID,
+				IsAdmin:           isAdmin,
+				PublicID:          publicID,
+				WorkspaceID:       workspaceID,
+				WorkspacePublicID: workspacePublicID,
+				TokenID:           claims.ID,
+				TokenExpiresAt:    claims.ExpiresAt.Time,
+				TokenVersion:      tokenVersion,
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 		})

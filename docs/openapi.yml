@@ -100,7 +100,7 @@ components:
         id:
           type: integer
           format: int64
-        user_id:
+        workspace_id:
           type: string
         project_id:
           type: integer
@@ -132,7 +132,7 @@ components:
         updated_at:
           type: string
           format: date-time
-      required: [id, user_id, project_id, title, created_at, updated_at]
+      required: [id, workspace_id, project_id, title, created_at, updated_at]
 
     Tag:
       type: object
@@ -217,7 +217,21 @@ components:
           required: [theme, showCompletedDefault, language]
         mfa_enabled:
           type: boolean
-      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings, mfa_enabled]
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workspace'
+      required: [public_id, email, is_admin, is_active, last_login, email_verified_at, settings, mfa_enabled, workspaces]
+
+    Workspace:
+      type: object
+      properties:
+        public_id:
+          type: string
+        type:
+          type: string
+          enum: [user, org]
+      required: [public_id, type]
 
     Occurrence:
       type: object

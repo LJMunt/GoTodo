@@ -94,8 +94,8 @@ func ListTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		query := `SELECT id, name, color, created_at, updated_at FROM tags WHERE user_id = $1`
-		args := []any{user.ID}
+		query := `SELECT id, name, color, created_at, updated_at FROM tags WHERE workspace_id = $1`
+		args := []any{user.WorkspaceID}
 
 		if q != "" {
 			// citext makes name comparisons case-insensitive
@@ -172,14 +172,14 @@ func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Str("name", name).Msg("creating tag")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Str("name", name).Msg("creating tag")
 
 		var out TagResponse
 		err := db.QueryRow(ctx,
-			`INSERT INTO tags (user_id, name, color)
+			`INSERT INTO tags (workspace_id, name, color)
 			 VALUES ($1, $2, $3)
 			 RETURNING id, name, color, created_at, updated_at`,
-			user.ID, name, color,
+			user.WorkspaceID, name, color,
 		).Scan(&out.ID, &out.Name, &out.Color, &out.CreatedAt, &out.UpdatedAt)
 
 		if err != nil {
@@ -252,20 +252,20 @@ func RenameTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("tag_id", tagID).Msg("updating tag")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("tag_id", tagID).Msg("updating tag")
 
 		var out TagResponse
 		var query string
 		var args []any
 		if req.Name != nil && req.Color != nil {
-			query = `UPDATE tags SET name = $1, color = $2, updated_at = now() WHERE id = $3 AND user_id = $4 RETURNING id, name, color, created_at, updated_at`
-			args = []any{name, *req.Color, tagID, user.ID}
+			query = `UPDATE tags SET name = $1, color = $2, updated_at = now() WHERE id = $3 AND workspace_id = $4 RETURNING id, name, color, created_at, updated_at`
+			args = []any{name, *req.Color, tagID, user.WorkspaceID}
 		} else if req.Name != nil {
-			query = `UPDATE tags SET name = $1, updated_at = now() WHERE id = $2 AND user_id = $3 RETURNING id, name, color, created_at, updated_at`
-			args = []any{name, tagID, user.ID}
+			query = `UPDATE tags SET name = $1, updated_at = now() WHERE id = $2 AND workspace_id = $3 RETURNING id, name, color, created_at, updated_at`
+			args = []any{name, tagID, user.WorkspaceID}
 		} else {
-			query = `UPDATE tags SET color = $1, updated_at = now() WHERE id = $2 AND user_id = $3 RETURNING id, name, color, created_at, updated_at`
-			args = []any{*req.Color, tagID, user.ID}
+			query = `UPDATE tags SET color = $1, updated_at = now() WHERE id = $2 AND workspace_id = $3 RETURNING id, name, color, created_at, updated_at`
+			args = []any{*req.Color, tagID, user.WorkspaceID}
 		}
 
 		err = db.QueryRow(ctx, query, args...).Scan(&out.ID, &out.Name, &out.Color, &out.CreatedAt, &out.UpdatedAt)
@@ -309,11 +309,11 @@ func DeleteTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("tag_id", tagID).Msg("deleting tag")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("tag_id", tagID).Msg("deleting tag")
 
 		tag, err := db.Exec(ctx,
-			`DELETE FROM tags WHERE id = $1 AND user_id = $2`,
-			tagID, user.ID,
+			`DELETE FROM tags WHERE id = $1 AND workspace_id = $2`,
+			tagID, user.WorkspaceID,
 		)
 		if err != nil {
 			l.Error().Err(err).Int64("tag_id", tagID).Msg("failed to delete tag")

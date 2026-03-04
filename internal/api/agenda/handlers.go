@@ -98,12 +98,12 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 			`SELECT t.id
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
-			 WHERE t.user_id = $1
+			 WHERE t.workspace_id = $1
 			   AND t.deleted_at IS NULL
 			   AND p.deleted_at IS NULL
 			   AND t.repeat_every IS NOT NULL
 			   AND t.repeat_unit IS NOT NULL`,
-			user.ID,
+			user.WorkspaceID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to load recurring tasks")
@@ -126,7 +126,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		for _, taskID := range recurringIDs {
-			if err := app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, to); err != nil {
+			if err := app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, to); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to generate occurrences")
 				return
 			}
@@ -149,7 +149,7 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     t.due_at      AS due_at
 			   FROM tasks t
 			   JOIN projects p ON p.id = t.project_id
-			   WHERE t.user_id = $1
+			   WHERE t.workspace_id = $1
 			     AND t.deleted_at IS NULL
 			     AND p.deleted_at IS NULL
 			     AND t.repeat_every IS NULL
@@ -172,14 +172,14 @@ func GetAgendaHandler(db *pgxpool.Pool) http.HandlerFunc {
 			   FROM task_occurrences o
 			   JOIN tasks t ON t.id = o.task_id
 			   JOIN projects p ON p.id = t.project_id
-			   WHERE o.user_id = $1
+			   WHERE o.workspace_id = $1
 			     AND t.deleted_at IS NULL
 			     AND p.deleted_at IS NULL
 			     AND o.completed_at IS NULL
 			     AND o.due_at >= $2 AND o.due_at <= $3
 			 ) x
 			 ORDER BY due_at, task_id, occurrence_id NULLS FIRST`,
-			user.ID, from, to,
+			user.WorkspaceID, from, to,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to build agenda")

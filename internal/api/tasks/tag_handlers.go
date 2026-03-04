@@ -25,7 +25,7 @@ func parseTaskID(r *http.Request) (int64, error) {
 }
 
 // Checks task visibility: task not deleted and project not deleted.
-func taskVisible(ctx context.Context, db *pgxpool.Pool, userID, taskID int64) (bool, error) {
+func taskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
 	var ok bool
 	err := db.QueryRow(ctx,
 		`SELECT EXISTS(
@@ -33,11 +33,11 @@ func taskVisible(ctx context.Context, db *pgxpool.Pool, userID, taskID int64) (b
 		   FROM tasks t
 		   JOIN projects p ON p.id = t.project_id
 		   WHERE t.id = $1
-		     AND t.user_id = $2
+		     AND t.workspace_id = $2
 		     AND t.deleted_at IS NULL
 		     AND p.deleted_at IS NULL
 		 )`,
-		taskID, userID,
+		taskID, workspaceID,
 	).Scan(&ok)
 	return ok, err
 }
@@ -59,7 +59,7 @@ func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		ok, err = taskVisible(ctx, db, user.ID, taskID)
+		ok, err = taskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -73,9 +73,9 @@ func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 			`SELECT tg.id, tg.name, tg.color
 									 FROM task_tags tt
 									 JOIN tags tg ON tg.id = tt.tag_id
-									 WHERE tt.user_id = $1 AND tt.task_id = $2
+									 WHERE tt.workspace_id = $1 AND tt.task_id = $2
 									 ORDER BY tg.name , tg.id `,
-			user.ID, taskID,
+			user.WorkspaceID, taskID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to list task tags")
@@ -148,9 +148,9 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Ints64("tag_ids", tagIDs).Msg("updating task tags")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("task_id", taskID).Ints64("tag_ids", tagIDs).Msg("updating task tags")
 
-		ok, err = taskVisible(ctx, db, user.ID, taskID)
+		ok, err = taskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -167,12 +167,12 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		// Validate that all tag IDs exist and belong to this user
+		// Validate that all tag IDs exist and belong to this workspace
 		if len(tagIDs) > 0 {
 			var count int
 			err = tx.QueryRow(ctx,
-				`SELECT COUNT(*) FROM tags WHERE user_id=$1 AND id = ANY($2::bigint[])`,
-				user.ID, tagIDs,
+				`SELECT COUNT(*) FROM tags WHERE workspace_id=$1 AND id = ANY($2::bigint[])`,
+				user.WorkspaceID, tagIDs,
 			).Scan(&count)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to validate tags")
@@ -186,8 +186,8 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// Replace-all:
 		_, err = tx.Exec(ctx,
-			`DELETE FROM task_tags WHERE user_id=$1 AND task_id=$2`,
-			user.ID, taskID,
+			`DELETE FROM task_tags WHERE workspace_id=$1 AND task_id=$2`,
+			user.WorkspaceID, taskID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to update task tags")
@@ -196,10 +196,10 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		if len(tagIDs) > 0 {
 			_, err = tx.Exec(ctx,
-				`INSERT INTO task_tags (user_id, task_id, tag_id)
+				`INSERT INTO task_tags (workspace_id, task_id, tag_id)
 				 SELECT $1, $2, unnest($3::bigint[])
 				 ON CONFLICT DO NOTHING`,
-				user.ID, taskID, tagIDs,
+				user.WorkspaceID, taskID, tagIDs,
 			)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to update task tags")
@@ -211,9 +211,9 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 			`SELECT tg.id, tg.name, tg.color
 									 FROM task_tags tt
 									 JOIN tags tg ON tg.id = tt.tag_id
-									 WHERE tt.user_id = $1 AND tt.task_id = $2
+									 WHERE tt.workspace_id = $1 AND tt.task_id = $2
 									 ORDER BY tg.name , tg.id `,
-			user.ID, taskID,
+			user.WorkspaceID, taskID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to read task tags")

@@ -22,15 +22,21 @@ type userSettings struct {
 	Language             string `json:"language"`
 }
 
+type WorkspaceResponse struct {
+	PublicID string `json:"public_id"`
+	Type     string `json:"type"`
+}
+
 type userMeResponse struct {
-	PublicID        string       `json:"public_id"`
-	Email           string       `json:"email"`
-	IsAdmin         bool         `json:"is_admin"`
-	IsActive        bool         `json:"is_active"`
-	LastLogin       *time.Time   `json:"last_login"`
-	EmailVerifiedAt *time.Time   `json:"email_verified_at"`
-	Settings        userSettings `json:"settings"`
-	MFAEnabled      bool         `json:"mfa_enabled"`
+	PublicID        string              `json:"public_id"`
+	Email           string              `json:"email"`
+	IsAdmin         bool                `json:"is_admin"`
+	IsActive        bool                `json:"is_active"`
+	LastLogin       *time.Time          `json:"last_login"`
+	EmailVerifiedAt *time.Time          `json:"email_verified_at"`
+	Settings        userSettings        `json:"settings"`
+	MFAEnabled      bool                `json:"mfa_enabled"`
+	Workspaces      []WorkspaceResponse `json:"workspaces"`
 }
 
 type apiError struct {
@@ -39,6 +45,7 @@ type apiError struct {
 
 type userDB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
@@ -76,6 +83,24 @@ func MeHandler(db userDB) http.HandlerFunc {
 			}
 			writeErr(w, http.StatusInternalServerError, "failed to fetch user")
 			return
+		}
+
+		// Fetch workspaces
+		rows, err := db.Query(ctx, "SELECT public_id, type FROM workspaces WHERE user_id = $1 AND type = 'user'", u.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch workspaces")
+			return
+		}
+		defer rows.Close()
+
+		res.Workspaces = make([]WorkspaceResponse, 0, 1)
+		for rows.Next() {
+			var ws WorkspaceResponse
+			if err := rows.Scan(&ws.PublicID, &ws.Type); err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to scan workspace")
+				return
+			}
+			res.Workspaces = append(res.Workspaces, ws)
 		}
 
 		writeJSON(w, http.StatusOK, res)
@@ -172,6 +197,25 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch updated user")
 			return
 		}
+
+		// Fetch workspaces
+		rows, err := db.Query(ctx, "SELECT public_id, type FROM workspaces WHERE user_id = $1 AND type = 'user'", u.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch workspaces")
+			return
+		}
+		defer rows.Close()
+
+		updatedRes.Workspaces = make([]WorkspaceResponse, 0, 1)
+		for rows.Next() {
+			var ws WorkspaceResponse
+			if err := rows.Scan(&ws.PublicID, &ws.Type); err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to scan workspace")
+				return
+			}
+			updatedRes.Workspaces = append(updatedRes.Workspaces, ws)
+		}
+
 		writeJSON(w, http.StatusOK, updatedRes)
 	}
 }

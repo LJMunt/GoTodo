@@ -41,11 +41,11 @@ func parseTimeQuery(r *http.Request, key string) (*time.Time, error) {
 }
 
 // recurringTaskVisible ensures:
-// - task belongs to user
+// - task belongs to workspace
 // - task not deleted
 // - project not deleted
 // - and task is recurring (repeat_* set)
-func recurringTaskVisible(ctx context.Context, db *pgxpool.Pool, userID, taskID int64) (bool, error) {
+func recurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
 	var ok bool
 	err := db.QueryRow(ctx,
 		`SELECT EXISTS(
@@ -53,13 +53,13 @@ func recurringTaskVisible(ctx context.Context, db *pgxpool.Pool, userID, taskID 
 		   FROM tasks t
 		   JOIN projects p ON p.id = t.project_id
 		   WHERE t.id = $1
-		     AND t.user_id = $2
+		     AND t.workspace_id = $2
 		     AND t.deleted_at IS NULL
 		     AND p.deleted_at IS NULL
 		     AND t.repeat_every IS NOT NULL
 		     AND t.repeat_unit IS NOT NULL
 		 )`,
-		taskID, userID,
+		taskID, workspaceID,
 	).Scan(&ok)
 	return ok, err
 }
@@ -107,7 +107,7 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		// Only recurring tasks have occurrences.
-		isRec, err := recurringTaskVisible(ctx, db, user.ID, taskID)
+		isRec, err := recurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -118,12 +118,12 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Lazy-generate up to `to` so the range query is complete.
-		if err := app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, to); err != nil {
+		if err := app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, to); err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to generate occurrences")
 			return
 		}
 
-		occ, err := app.ListTaskOccurrences(ctx, db, user.ID, taskID, from, to)
+		occ, err := app.ListTaskOccurrences(ctx, db, user.WorkspaceID, taskID, from, to)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to list occurrences")
 			return
@@ -183,7 +183,7 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		// Ensure this task is a visible recurring task.
-		isRec, err := recurringTaskVisible(ctx, db, user.ID, taskID)
+		isRec, err := recurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -193,7 +193,7 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		updated, err := app.SetOccurrenceCompleted(ctx, db, user.ID, taskID, occID, *req.Completed)
+		updated, err := app.SetOccurrenceCompleted(ctx, db, user.WorkspaceID, taskID, occID, *req.Completed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "occurrence not found")
 			return
@@ -204,7 +204,7 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Best-effort: keep next_due_at fresh without cron
-		_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, time.Now().UTC().AddDate(0, 0, 60))
+		_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, time.Now().UTC().AddDate(0, 0, 60))
 
 		writeJSON(w, http.StatusOK, occurrenceResponse{
 			ID:              updated.ID,
