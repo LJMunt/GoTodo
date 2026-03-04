@@ -6,26 +6,39 @@
 
 GoToDo is a production-ready, clean, and robust ToDo API built with Go. It serves as a comprehensive backend for task management applications, featuring advanced capabilities like recurring tasks, multi-language support, and administrative controls.
 
-### 📖 API Documentation
+### API Documentation
 
 The complete API reference is available at:  
 👉 **[https://docs.todexia.app](https://docs.todexia.app)**
 
 ---
 
-### ✨ Features
+### Roadmap
+- [x] **User Management**
+- [x] **Project Management**
+- [x] **Task Management**
+- [x] **Recurring Tasks**
+- [x] **Tag Management**
+- [x] **Task Tags**
+- [x] **Occurrence Management**
+- [x] **Language Management**
+- [x] **Admin Tools**
+- [x] **Configuration Management**
+- [x] **Dockerization**
+- [x] **User Authentication**
+- [x] **User Password Reset**
+- [x] **User Email Verification**
+- [x] **User Preferences Management**
+- [ ] **User Invitations**
+- [ ] **Organizations**
+- [ ] **Redis Caching**
+- [ ] **GoTodo Runner**
+- [ ] **Android App**
 
-- **Core Task Management:** CRUD operations for tasks, projects, and tags.
-- **Advanced Recurrence:** Support for daily, weekly, and monthly recurring tasks with automatic occurrence generation.
-- **Multi-language Support:** Dynamic translation system for UI labels and user-specific language preferences (English, French, German).
-- **Secure Authentication:** JWT-based auth with brute-force protection and secure password hashing.
-- **Admin Dashboard Ready:** Dedicated endpoints for user management, system health metrics, and global configuration.
-- **Robust Infrastructure:** PostgreSQL storage, automatic migrations, and full Docker containerization.
-
-### 🛠 Tech Stack
+### Tech Stack
 
 - **Language:** Go 1.24 (Modern idioms & toolchain)
-- **Framework:** [Chi Router](https://github.com/go-chi/chi) (Lightweight, idiomatic)
+- **Framework:** [Chi Router](https://github.com/go-chi/chi)
 - **Database:** PostgreSQL with [pgx](https://github.com/jackc/pgx)
 - **Migrations:** [golang-migrate](https://github.com/golang-migrate/migrate)
 - **Auth:** JWT (JSON Web Tokens)
@@ -33,7 +46,7 @@ The complete API reference is available at:
 
 ---
 
-### 🚀 Getting Started
+### Getting Started
 
 #### Prerequisites
 
@@ -81,7 +94,7 @@ Migrations and seed data are applied automatically on startup.
 
 ---
 
-### ⚙️ Configuration
+###  Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -128,7 +141,7 @@ SECRETS_MASTER_KEY_B64=...
 
 ---
 
-### 🛠 Administrative Tools
+### Administrative Tools
 
 #### Restoring Default Languages
 If default translations are missing or corrupted, use the built-in restoration tool:
@@ -231,9 +244,8 @@ go run ./cmd/user-export --tokenize --out user-export-anon.json
 
 ---
 
-### 📜 License
+### License
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
-Built with ❤️ by the Todexia Team.
