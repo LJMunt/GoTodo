@@ -70,6 +70,49 @@ func defaultHorizon() time.Time {
 	return time.Now().UTC().AddDate(0, 0, 60)
 }
 
+// TaskVisible ensures:
+// - task belongs to workspace
+// - task not deleted
+// - project not deleted
+func TaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
+	var ok bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1
+		   FROM tasks t
+		   JOIN projects p ON p.id = t.project_id
+		   WHERE t.id = $1
+		     AND t.workspace_id = $2
+		     AND t.deleted_at IS NULL
+		     AND p.deleted_at IS NULL
+		 )`,
+		taskID, workspaceID,
+	).Scan(&ok)
+	return ok, err
+}
+
+// RecurringTaskVisible ensures:
+// - TaskVisible condition
+// - and task is recurring (repeat_* set)
+func RecurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
+	var ok bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1
+		   FROM tasks t
+		   JOIN projects p ON p.id = t.project_id
+		   WHERE t.id = $1
+		     AND t.workspace_id = $2
+		     AND t.deleted_at IS NULL
+		     AND p.deleted_at IS NULL
+		     AND t.repeat_every IS NOT NULL
+		     AND t.repeat_unit IS NOT NULL
+		 )`,
+		taskID, workspaceID,
+	).Scan(&ok)
+	return ok, err
+}
+
 func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type request struct {
 		Title       string     `json:"title"`

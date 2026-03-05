@@ -24,24 +24,6 @@ func parseTaskID(r *http.Request) (int64, error) {
 	return parseInt64Param(r, "taskId")
 }
 
-// Checks task visibility: task not deleted and project not deleted.
-func taskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
-	var ok bool
-	err := db.QueryRow(ctx,
-		`SELECT EXISTS(
-		   SELECT 1
-		   FROM tasks t
-		   JOIN projects p ON p.id = t.project_id
-		   WHERE t.id = $1
-		     AND t.workspace_id = $2
-		     AND t.deleted_at IS NULL
-		     AND p.deleted_at IS NULL
-		 )`,
-		taskID, workspaceID,
-	).Scan(&ok)
-	return ok, err
-}
-
 func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
@@ -59,7 +41,7 @@ func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		ok, err = taskVisible(ctx, db, user.WorkspaceID, taskID)
+		ok, err = TaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -150,7 +132,7 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		l := logging.From(r.Context())
 		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("task_id", taskID).Ints64("tag_ids", tagIDs).Msg("updating task tags")
 
-		ok, err = taskVisible(ctx, db, user.WorkspaceID, taskID)
+		ok, err = TaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return

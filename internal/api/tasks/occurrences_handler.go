@@ -40,30 +40,6 @@ func parseTimeQuery(r *http.Request, key string) (*time.Time, error) {
 	return &t, nil
 }
 
-// recurringTaskVisible ensures:
-// - task belongs to workspace
-// - task not deleted
-// - project not deleted
-// - and task is recurring (repeat_* set)
-func recurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
-	var ok bool
-	err := db.QueryRow(ctx,
-		`SELECT EXISTS(
-		   SELECT 1
-		   FROM tasks t
-		   JOIN projects p ON p.id = t.project_id
-		   WHERE t.id = $1
-		     AND t.workspace_id = $2
-		     AND t.deleted_at IS NULL
-		     AND p.deleted_at IS NULL
-		     AND t.repeat_every IS NOT NULL
-		     AND t.repeat_unit IS NOT NULL
-		 )`,
-		taskID, workspaceID,
-	).Scan(&ok)
-	return ok, err
-}
-
 func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
@@ -107,7 +83,7 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		// Only recurring tasks have occurrences.
-		isRec, err := recurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
+		isRec, err := RecurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
@@ -183,7 +159,7 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		// Ensure this task is a visible recurring task.
-		isRec, err := recurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
+		isRec, err := RecurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify task")
 			return
