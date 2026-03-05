@@ -30,6 +30,36 @@ type fakeAuthDB struct {
 	execFn     func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+type fakeTx struct {
+	db *fakeAuthDB
+}
+
+func (tx *fakeTx) Begin(ctx context.Context) (pgx.Tx, error) { return nil, nil }
+func (tx *fakeTx) Commit(ctx context.Context) error          { return nil }
+func (tx *fakeTx) Rollback(ctx context.Context) error        { return nil }
+func (tx *fakeTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (tx *fakeTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { return nil }
+func (tx *fakeTx) LargeObjects() pgx.LargeObjects                               { return pgx.LargeObjects{} }
+func (tx *fakeTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
+func (tx *fakeTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	return tx.db.Exec(ctx, sql, arguments...)
+}
+func (tx *fakeTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return tx.db.Query(ctx, sql, args...)
+}
+func (tx *fakeTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return tx.db.QueryRow(ctx, sql, args...)
+}
+func (tx *fakeTx) Conn() *pgx.Conn { return nil }
+
+func (db fakeAuthDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return &fakeTx{db: &db}, nil
+}
+
 func (db fakeAuthDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if db.queryFn == nil {
 		return nil, nil

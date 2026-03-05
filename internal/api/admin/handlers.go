@@ -37,18 +37,18 @@ type UserResponse struct {
 }
 
 type TaskResponse struct {
-	ID           int64      `json:"id"`
-	UserPublicID string     `json:"user_id"`
-	ProjectID    int64      `json:"project_id"`
-	Title        string     `json:"title"`
-	Description  *string    `json:"description,omitempty"`
-	DueAt        *time.Time `json:"due_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	RepeatEvery  *int       `json:"repeat_every,omitempty"`
-	RepeatUnit   *string    `json:"repeat_unit,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID                int64      `json:"id"`
+	WorkspacePublicID string     `json:"workspace_id"`
+	ProjectID         int64      `json:"project_id"`
+	Title             string     `json:"title"`
+	Description       *string    `json:"description,omitempty"`
+	DueAt             *time.Time `json:"due_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	RepeatEvery       *int       `json:"repeat_every,omitempty"`
+	RepeatUnit        *string    `json:"repeat_unit,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type TagResponse struct {
@@ -496,13 +496,14 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		query := `SELECT id, name, description, created_at, updated_at
-			 FROM projects
-			 WHERE user_id=$1`
+		query := `SELECT p.id, p.name, p.description, p.created_at, p.updated_at
+			 FROM projects p
+			 JOIN workspaces w ON w.id = p.workspace_id
+			 WHERE w.user_id=$1 AND w.type = 'user'`
 		if !includeDeleted {
-			query += " AND deleted_at IS NULL"
+			query += " AND p.deleted_at IS NULL"
 		}
-		query += " ORDER BY id"
+		query += " ORDER BY p.id"
 
 		rows, err := db.Query(ctx, query, userID)
 		if err != nil {
@@ -549,11 +550,12 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		var p ProjectResponse
-		query := `SELECT id, name, description, created_at, updated_at
-			 FROM projects
-			 WHERE id = $1 AND user_id = $2`
+		query := `SELECT p.id, p.name, p.description, p.created_at, p.updated_at
+			 FROM projects p
+			 JOIN workspaces w ON w.id = p.workspace_id
+			 WHERE p.id = $1 AND w.user_id = $2 AND w.type = 'user'`
 		if !includeDeleted {
-			query += " AND deleted_at IS NULL"
+			query += " AND p.deleted_at IS NULL"
 		}
 
 		err = db.QueryRow(ctx, query, projectID, userID).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
@@ -609,7 +611,7 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			 SET name = COALESCE($1, name),
 			     description = COALESCE($2, description),
 			     updated_at = now()
-			 WHERE id = $3 AND user_id = $4 AND deleted_at IS NULL`,
+			 WHERE id = $3 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $4 AND type = 'user') AND deleted_at IS NULL`,
 			req.Name, req.Description, projectID, userID,
 		)
 		if err != nil {
@@ -651,7 +653,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := tx.Exec(ctx,
 			`UPDATE projects
 			 SET deleted_at = now(), updated_at = now()
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NULL`,
 			projectID, userID,
 		)
 		if err != nil {
@@ -666,7 +668,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		_, err = tx.Exec(ctx,
 			`UPDATE tasks
 			 SET deleted_at = now(), updated_at = now()
-			 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			 WHERE project_id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NULL`,
 			projectID, userID,
 		)
 		if err != nil {
@@ -726,7 +728,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := tx.Exec(ctx,
 			`UPDATE projects
 			 SET deleted_at = NULL, updated_at = now()
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NOT NULL`,
 			projectID, userID,
 		)
 		if err != nil {
@@ -742,7 +744,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 			_, err := tx.Exec(ctx,
 				`UPDATE tasks
 				 SET deleted_at = NULL, updated_at = now()
-				 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+				 WHERE project_id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NOT NULL`,
 				projectID, userID,
 			)
 			if err != nil {
@@ -782,7 +784,8 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			`SELECT (p.deleted_at IS NOT NULL) AS project_deleted
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
-			 WHERE t.id = $1 AND t.user_id = $2`,
+			 JOIN workspaces w ON w.id = t.workspace_id
+			 WHERE t.id = $1 AND w.user_id = $2 AND w.type = 'user'`,
 			taskID, userID,
 		).Scan(&projectDeleted)
 
@@ -803,7 +806,7 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks
 			 SET deleted_at = NULL, updated_at = now()
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NOT NULL`,
 			taskID, userID,
 		)
 		if err != nil {
@@ -839,8 +842,9 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
-			JOIN users u ON u.id = t.user_id
-			WHERE t.user_id = $1
+			JOIN workspaces w ON w.id = t.workspace_id
+			JOIN users u ON u.id = w.user_id
+			WHERE w.user_id = $1 AND w.type = 'user'
 		`
 
 		if !includeDeleted {
@@ -862,7 +866,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TaskResponse
 			if err := rows.Scan(
-				&t.ID, &t.UserPublicID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &t.WorkspacePublicID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
@@ -905,7 +909,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if err := db.QueryRow(ctx,
 			`SELECT EXISTS(
 			   SELECT 1 FROM projects
-			   WHERE id=$1 AND user_id=$2 AND ($3::boolean = true OR deleted_at IS NULL)
+			   WHERE id=$1 AND workspace_id=(SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND ($3::boolean = true OR deleted_at IS NULL)
 			 )`,
 			projectID, userID, includeDeleted,
 		).Scan(&projectOK); err != nil {
@@ -922,8 +926,9 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
-			JOIN users u ON u.id = t.user_id
-			WHERE t.user_id = $1 AND t.project_id = $2
+			JOIN workspaces w ON w.id = t.workspace_id
+			JOIN users u ON u.id = w.user_id
+			WHERE w.user_id = $1 AND t.project_id = $2 AND w.type = 'user'
 		`
 		if !includeDeleted {
 			query += " AND t.deleted_at IS NULL"
@@ -943,7 +948,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var t TaskResponse
 			if err := rows.Scan(
-				&t.ID, &t.UserPublicID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &t.WorkspacePublicID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
@@ -982,7 +987,7 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks
 			 SET deleted_at = now(), updated_at = now()
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user') AND deleted_at IS NULL`,
 			taskID, userID,
 		)
 		if err != nil {
@@ -1013,7 +1018,7 @@ func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		query := `
 			SELECT id, name, created_at, updated_at
 			FROM tags
-			WHERE user_id = $1`
+			WHERE workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 AND type = 'user')`
 		args := []any{userID}
 		if q != "" {
 			query += ` AND name ILIKE '%' || $2 || '%'`
@@ -1063,7 +1068,7 @@ func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		query := `DELETE FROM tags WHERE id = $1 AND user_id = $2`
+		query := `DELETE FROM tags WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE user_id = $2 AND type = 'user')`
 		tag, err := db.Exec(ctx, query, tagID, userID)
 		if err != nil {
 			writeErr(w, "failed to delete tag", http.StatusInternalServerError)

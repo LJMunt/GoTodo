@@ -49,9 +49,10 @@ type apiError struct {
 }
 
 type authDB interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 const minPasswordLen = 8
@@ -167,19 +168,26 @@ func SignupHandler(db authDB) http.HandlerFunc {
 
 		publicID := app.NewULID()
 
-		ctx, cancel = context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
+
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
 
 		var id int64
 		var tokenVersion int64
 		if requireVerification {
-			err = db.QueryRow(ctx,
+			err = tx.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, public_id) VALUES ($1, $2, $3)
 				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
 			).Scan(&id, &tokenVersion)
 		} else {
-			err = db.QueryRow(ctx,
+			err = tx.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, email_verified_at, public_id) VALUES ($1, $2, NOW(), $3)
 				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
@@ -194,6 +202,24 @@ func SignupHandler(db authDB) http.HandlerFunc {
 				return
 			}
 			l.Error().Err(err).Str("email", email).Msg("signup failed: database error")
+			writeErr(w, http.StatusInternalServerError, "failed to create user")
+			return
+		}
+
+		// Create a personal workspace for the new user
+		workspacePublicID := app.NewULID()
+		_, err = tx.Exec(ctx,
+			`INSERT INTO workspaces (type, user_id, public_id) VALUES ('user', $1, $2)`,
+			id, workspacePublicID,
+		)
+		if err != nil {
+			l.Error().Err(err).Int64("user_id", id).Msg("signup failed: failed to create workspace")
+			writeErr(w, http.StatusInternalServerError, "failed to create workspace")
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("user_id", id).Msg("signup failed: failed to commit transaction")
 			writeErr(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
