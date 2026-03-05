@@ -21,6 +21,8 @@ import (
 type exportPayload struct {
 	ExportedAt    time.Time        `json:"exported_at"`
 	Users         []map[string]any `json:"users"`
+	Workspaces    []map[string]any `json:"workspaces"`
+	Orgs          []map[string]any `json:"orgs"`
 	Projects      []map[string]any `json:"projects"`
 	Tasks         []map[string]any `json:"tasks"`
 	Tags          []map[string]any `json:"tags"`
@@ -54,6 +56,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to export users: %v", err)
 	}
+	workspaces, err := queryTable(ctx, pool, "SELECT * FROM workspaces ORDER BY id ASC")
+	if err != nil {
+		log.Fatalf("failed to export workspaces: %v", err)
+	}
+	orgs, err := queryTable(ctx, pool, "SELECT * FROM orgs ORDER BY id ASC")
+	if err != nil {
+		log.Fatalf("failed to export orgs: %v", err)
+	}
 	projects, err := queryTable(ctx, pool, "SELECT * FROM projects ORDER BY id ASC")
 	if err != nil {
 		log.Fatalf("failed to export projects: %v", err)
@@ -76,12 +86,14 @@ func main() {
 	}
 
 	if *tokenize {
-		tokenizeUsers(users)
+		tokenizeUsers(users, workspaces)
 	}
 
 	payload := exportPayload{
 		ExportedAt:    time.Now().UTC(),
 		Users:         users,
+		Workspaces:    workspaces,
+		Orgs:          orgs,
 		Projects:      projects,
 		Tasks:         tasks,
 		Tags:          tags,
@@ -128,7 +140,7 @@ func queryTable(ctx context.Context, q interface {
 	return out, rows.Err()
 }
 
-func tokenizeUsers(rows []map[string]any) {
+func tokenizeUsers(rows []map[string]any, workspaces []map[string]any) {
 	for _, row := range rows {
 		id, ok := row["id"]
 		if !ok {
@@ -145,5 +157,16 @@ func tokenizeUsers(rows []map[string]any) {
 		if _, ok := row["password_hash"]; ok {
 			row["password_hash"] = ""
 		}
+		if _, ok := row["totp_secret_enc"]; ok {
+			row["totp_secret_enc"] = nil
+		}
+	}
+
+	for _, row := range workspaces {
+		id, ok := row["id"]
+		if !ok {
+			continue
+		}
+		row["public_id"] = fmt.Sprintf("ws-%v", id)
 	}
 }
