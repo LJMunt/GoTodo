@@ -18,11 +18,11 @@ import (
 )
 
 type TaskResponse struct {
-	ID           int64   `json:"id"`
-	UserPublicID string  `json:"user_id"`
-	ProjectID    int64   `json:"project_id"`
-	Title        string  `json:"title"`
-	Description  *string `json:"description,omitempty"`
+	ID                int64   `json:"id"`
+	WorkspacePublicID string  `json:"workspace_id"`
+	ProjectID         int64   `json:"project_id"`
+	Title             string  `json:"title"`
+	Description       *string `json:"description,omitempty"`
 
 	// DueAt semantics:
 	// - non-recurring: tasks.due_at
@@ -68,6 +68,49 @@ func isRecurring(repeatEvery *int, repeatUnit *string) bool {
 // to keep next_due_at accurate for UI.
 func defaultHorizon() time.Time {
 	return time.Now().UTC().AddDate(0, 0, 60)
+}
+
+// TaskVisible ensures:
+// - task belongs to workspace
+// - task not deleted
+// - project not deleted
+func TaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
+	var ok bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1
+		   FROM tasks t
+		   JOIN projects p ON p.id = t.project_id
+		   WHERE t.id = $1
+		     AND t.workspace_id = $2
+		     AND t.deleted_at IS NULL
+		     AND p.deleted_at IS NULL
+		 )`,
+		taskID, workspaceID,
+	).Scan(&ok)
+	return ok, err
+}
+
+// RecurringTaskVisible ensures:
+// - TaskVisible condition
+// - and task is recurring (repeat_* set)
+func RecurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
+	var ok bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1
+		   FROM tasks t
+		   JOIN projects p ON p.id = t.project_id
+		   WHERE t.id = $1
+		     AND t.workspace_id = $2
+		     AND t.deleted_at IS NULL
+		     AND p.deleted_at IS NULL
+		     AND t.repeat_every IS NOT NULL
+		     AND t.repeat_unit IS NOT NULL
+		 )`,
+		taskID, workspaceID,
+	).Scan(&ok)
+	return ok, err
 }
 
 func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
@@ -131,14 +174,14 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 
-		// Ensure project exists, belongs to user, and is not deleted
+		// Ensure project exists, belongs to workspace, and is not deleted
 		var projectOK bool
 		if err := db.QueryRow(ctx,
 			`SELECT EXISTS(
 			   SELECT 1 FROM projects
-			   WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			   WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL
 			 )`,
-			projectID, user.ID,
+			projectID, user.WorkspaceID,
 		).Scan(&projectOK); err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify project")
 			return
@@ -174,20 +217,20 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		var userID int64
+		var wsID int64
 		err = tx.QueryRow(ctx,
-			`INSERT INTO tasks (user_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
+			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			 RETURNING id, user_id, project_id, title, description,
+			 RETURNING id, workspace_id, project_id, title, description,
 			           due_at, completed_at, deleted_at,
 			           repeat_every, repeat_unit,
 			           recurrence_start_at, next_due_at,
 			           created_at, updated_at`,
-			user.ID, projectID, req.Title, req.Description,
+			user.WorkspaceID, projectID, req.Title, req.Description,
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
 			recurrenceStartAt, nextDueAt,
 		).Scan(
-			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -197,15 +240,15 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to create task")
 			return
 		}
-		t.UserPublicID = user.PublicID
+		t.WorkspacePublicID = user.WorkspacePublicID
 
 		// If recurring, ensure the first occurrence exists (history basis)
 		if recurring {
 			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+				`INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
 				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
 				 ON CONFLICT (task_id, due_at) DO NOTHING`,
-				user.ID, t.ID, t.RecurrenceStartAt.UTC(),
+				user.WorkspaceID, t.ID, t.RecurrenceStartAt.UTC(),
 			)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to create initial occurrence")
@@ -213,15 +256,15 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			}
 
 			// Generate ahead a bit and update next_due_at cache
-			if err := app.EnsureOccurrencesUpTo(ctx, tx, user.ID, t.ID, defaultHorizon()); err != nil {
+			if err := app.EnsureOccurrencesUpTo(ctx, tx, user.WorkspaceID, t.ID, defaultHorizon()); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to initialize occurrences")
 				return
 			}
 
 			// Refresh next_due_at for response
 			_ = tx.QueryRow(ctx,
-				`SELECT next_due_at FROM tasks WHERE id=$1 AND user_id=$2`,
-				t.ID, user.ID,
+				`SELECT next_due_at FROM tasks WHERE id=$1 AND workspace_id=$2`,
+				t.ID, user.WorkspaceID,
 			).Scan(&t.NextDueAt)
 
 			// For response, DueAt should represent "next due"
@@ -262,9 +305,9 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		if err := db.QueryRow(ctx,
 			`SELECT EXISTS(
 			   SELECT 1 FROM projects
-			   WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			   WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL
 			 )`,
-			projectID, user.ID,
+			projectID, user.WorkspaceID,
 		).Scan(&projectOK); err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to verify project")
 			return
@@ -275,15 +318,15 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx,
-			`SELECT id, user_id, project_id, title, description,
+			`SELECT id, workspace_id, project_id, title, description,
 			        due_at, completed_at, deleted_at,
 			        repeat_every, repeat_unit,
 			        recurrence_start_at, next_due_at,
 			        created_at, updated_at
 			 FROM tasks
-			 WHERE user_id=$1 AND project_id=$2 AND deleted_at IS NULL
+			 WHERE workspace_id=$1 AND project_id=$2 AND deleted_at IS NULL
 			 ORDER BY id`,
-			user.ID, projectID,
+			user.WorkspaceID, projectID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to list tasks")
@@ -296,9 +339,9 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		for rows.Next() {
 			var t TaskResponse
-			var userID int64
+			var wsID int64
 			if err := rows.Scan(
-				&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
+				&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.RecurrenceStartAt, &t.NextDueAt,
@@ -307,7 +350,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
 				return
 			}
-			t.UserPublicID = user.PublicID
+			t.WorkspacePublicID = user.WorkspacePublicID
 
 			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
 				recurringTaskIDs = append(recurringTaskIDs, t.ID)
@@ -324,15 +367,15 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		// Lazy generation to keep next_due_at up to date.
 		h := defaultHorizon()
 		for _, taskID := range recurringTaskIDs {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, h) // best-effort
+			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, h) // best-effort
 		}
 
 		if len(recurringTaskIDs) > 0 {
 			rows2, err := db.Query(ctx,
 				`SELECT id, next_due_at
 				 FROM tasks
-				 WHERE user_id=$1 AND id = ANY($2)`,
-				user.ID, recurringTaskIDs,
+				 WHERE workspace_id=$1 AND id = ANY($2)`,
+				user.WorkspaceID, recurringTaskIDs,
 			)
 			if err == nil {
 				defer rows2.Close()
@@ -379,19 +422,19 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		defer cancel()
 
 		var t TaskResponse
-		var userID int64
+		var wsID int64
 		err = db.QueryRow(ctx,
-			`SELECT t.id, t.user_id, t.project_id, t.title, t.description,
+			`SELECT t.id, t.workspace_id, t.project_id, t.title, t.description,
 			        t.due_at, t.completed_at, t.deleted_at,
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at,
 			        t.created_at, t.updated_at
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
-			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
-			taskID, user.ID,
+			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
+			taskID, user.WorkspaceID,
 		).Scan(
-			&t.ID, &userID, &t.ProjectID, &t.Title, &t.Description,
+			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
@@ -406,14 +449,14 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
 			return
 		}
-		t.UserPublicID = user.PublicID
+		t.WorkspacePublicID = user.WorkspacePublicID
 
 		if isRecurring(t.RepeatEvery, t.RepeatUnit) {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, t.ID, defaultHorizon()) // best-effort
+			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, t.ID, defaultHorizon()) // best-effort
 
 			_ = db.QueryRow(ctx,
-				`SELECT next_due_at FROM tasks WHERE id=$1 AND user_id=$2`,
-				t.ID, user.ID,
+				`SELECT next_due_at FROM tasks WHERE id=$1 AND workspace_id=$2`,
+				t.ID, user.WorkspaceID,
 			).Scan(&t.NextDueAt)
 
 			t.DueAt = t.NextDueAt
@@ -514,8 +557,8 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			        t.recurrence_start_at, t.next_due_at
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
-			 WHERE t.id=$1 AND t.user_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
-			taskID, user.ID,
+			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
+			taskID, user.WorkspaceID,
 		).Scan(
 			&projectID, &curTitle, &curDesc, &curDueAt, &curCompletedAt,
 			&curRepeatEvery, &curRepeatUnit,
@@ -598,8 +641,8 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 				newRecStart = &d
 				_, err := tx.Exec(ctx,
 					`DELETE FROM task_occurrences
-					 WHERE user_id=$1 AND task_id=$2 AND completed_at IS NULL AND due_at >= $3`,
-					user.ID, taskID, d,
+					 WHERE workspace_id=$1 AND task_id=$2 AND completed_at IS NULL AND due_at >= $3`,
+					user.WorkspaceID, taskID, d,
 				)
 				if err != nil {
 					writeErr(w, http.StatusInternalServerError, "failed to reset future occurrences")
@@ -624,10 +667,10 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 			// Ensure anchor occurrence exists
 			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+				`INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
 				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
 				 ON CONFLICT (task_id, due_at) DO NOTHING`,
-				user.ID, taskID, a,
+				user.WorkspaceID, taskID, a,
 			)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to create initial occurrence")
@@ -672,7 +715,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     recurrence_start_at=$7,
 			     next_due_at=$8,
 			     updated_at=now()
-			 WHERE id=$9 AND user_id=$10 AND deleted_at IS NULL
+			 WHERE id=$9 AND workspace_id=$10 AND deleted_at IS NULL
 			 RETURNING next_due_at`,
 			newTitle,
 			newDesc,
@@ -683,7 +726,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			newRecStart,
 			newNextDue,
 			taskID,
-			user.ID,
+			user.WorkspaceID,
 		).Scan(&newNextDue)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to update task")
@@ -698,7 +741,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// If it's recurring after update, generate occurrences and refresh next_due_at cache.
 		if willBeRecurring {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.ID, taskID, defaultHorizon())
+			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, defaultHorizon())
 		}
 
 		l.Info().Int64("task_id", taskID).Msg("task updated successfully")
@@ -728,8 +771,8 @@ func DeleteTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		tag, err := db.Exec(ctx,
 			`UPDATE tasks SET deleted_at=now(), updated_at=now()
-			 WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,
-			taskID, user.ID,
+			 WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`,
+			taskID, user.WorkspaceID,
 		)
 		if err != nil {
 			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to delete task")

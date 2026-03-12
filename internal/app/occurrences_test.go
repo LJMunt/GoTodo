@@ -85,7 +85,7 @@ func TestEnsureOccurrencesUpTo_Daily(t *testing.T) {
 			// 3. SELECT MIN(due_at) ...
 			if sql == `SELECT repeat_every, repeat_unit, recurrence_start_at
 		 FROM tasks
-		 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL` {
+		 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**int)) = &every
@@ -97,7 +97,7 @@ func TestEnsureOccurrencesUpTo_Daily(t *testing.T) {
 			}
 			if sql == `SELECT MAX(due_at), MAX(occurrence_index)
 		 FROM task_occurrences
-		 WHERE user_id=$1 AND task_id=$2` {
+		 WHERE workspace_id=$1 AND task_id=$2` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**time.Time)) = nil // No previous occurrences
@@ -109,7 +109,7 @@ func TestEnsureOccurrencesUpTo_Daily(t *testing.T) {
 			return &MockRow{ScanFunc: func(dest ...any) error { return nil }}
 		},
 		ExecFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			if sql == `INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
 			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING` {
 				inserted = append(inserted, args[2].(time.Time))
@@ -149,7 +149,7 @@ func TestEnsureOccurrencesUpTo_Monthly(t *testing.T) {
 		QueryRowFunc: func(ctx context.Context, sql string, args ...any) pgx.Row {
 			if sql == `SELECT repeat_every, repeat_unit, recurrence_start_at
 		 FROM tasks
-		 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL` {
+		 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**int)) = &every
@@ -161,7 +161,7 @@ func TestEnsureOccurrencesUpTo_Monthly(t *testing.T) {
 			}
 			if sql == `SELECT MAX(due_at), MAX(occurrence_index)
 		 FROM task_occurrences
-		 WHERE user_id=$1 AND task_id=$2` {
+		 WHERE workspace_id=$1 AND task_id=$2` {
 				return &MockRow{
 					ScanFunc: func(dest ...any) error {
 						*(dest[0].(**time.Time)) = nil
@@ -173,7 +173,7 @@ func TestEnsureOccurrencesUpTo_Monthly(t *testing.T) {
 			return &MockRow{ScanFunc: func(dest ...any) error { return nil }}
 		},
 		ExecFunc: func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-			if sql == `INSERT INTO task_occurrences (user_id, task_id, due_at, occurrence_index)
+			if sql == `INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
 			 VALUES ($1, $2, $3, $4)
 			 ON CONFLICT (task_id, due_at) DO NOTHING` {
 				inserted = append(inserted, args[2].(time.Time))

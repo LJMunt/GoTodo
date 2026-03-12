@@ -79,14 +79,14 @@ func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
 		defer cancel()
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Str("name", req.Name).Msg("creating project")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Str("name", req.Name).Msg("creating project")
 
 		var p ProjectResponse
 		err := db.QueryRow(ctx,
-			`INSERT INTO projects (user_id, name, description)
+			`INSERT INTO projects (workspace_id, name, description)
 			 VALUES ($1, $2, $3)
 			 RETURNING id, name, description, created_at, updated_at`,
-			user.ID, req.Name, req.Description,
+			user.WorkspaceID, req.Name, req.Description,
 		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if err != nil {
@@ -116,7 +116,7 @@ func ListProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE user_id=$1 AND deleted_at IS NULL ORDER BY id`, user.ID)
+		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE workspace_id=$1 AND deleted_at IS NULL ORDER BY id`, user.WorkspaceID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to list projects")
 			return
@@ -158,8 +158,8 @@ func GetProjectHandler(db projectQuerier) http.HandlerFunc {
 		err = db.QueryRow(ctx,
 			`SELECT id, name, description, created_at, updated_at
 			 FROM projects
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
-			id, user.ID,
+			 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+			id, user.WorkspaceID,
 		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -195,7 +195,7 @@ func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 		}
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("project_id", id).Msg("updating project")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("project_id", id).Msg("updating project")
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -211,8 +211,8 @@ func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 			 SET name = COALESCE($1, name),
 			     description = COALESCE($2, description),
 			     updated_at = now()
-			 WHERE id = $3 AND user_id = $4`,
-			req.Name, req.Description, id, user.ID,
+			 WHERE id = $3 AND workspace_id = $4`,
+			req.Name, req.Description, id, user.WorkspaceID,
 		)
 
 		if err != nil {
@@ -246,7 +246,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("project_id", id).Msg("deleting project")
+		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("project_id", id).Msg("deleting project")
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -262,8 +262,8 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tag, err := tx.Exec(ctx,
 			`UPDATE projects
 			 SET deleted_at = now(), updated_at = now()
-			 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
-			id, user.ID,
+			 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+			id, user.WorkspaceID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to delete project")
@@ -279,8 +279,8 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		_, err = tx.Exec(ctx,
 			`UPDATE tasks
 			 SET deleted_at = now(), updated_at = now()
-			 WHERE project_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
-			id, user.ID,
+			 WHERE project_id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
+			id, user.WorkspaceID,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to delete project tasks")

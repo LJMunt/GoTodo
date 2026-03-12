@@ -22,14 +22,21 @@ type userSettings struct {
 	Language             string `json:"language"`
 }
 
+type WorkspaceResponse struct {
+	PublicID string `json:"public_id"`
+	Type     string `json:"type"`
+}
+
 type userMeResponse struct {
-	PublicID        string       `json:"public_id"`
-	Email           string       `json:"email"`
-	IsAdmin         bool         `json:"is_admin"`
-	IsActive        bool         `json:"is_active"`
-	LastLogin       *time.Time   `json:"last_login"`
-	EmailVerifiedAt *time.Time   `json:"email_verified_at"`
-	Settings        userSettings `json:"settings"`
+	PublicID        string              `json:"public_id"`
+	Email           string              `json:"email"`
+	IsAdmin         bool                `json:"is_admin"`
+	IsActive        bool                `json:"is_active"`
+	LastLogin       *time.Time          `json:"last_login"`
+	EmailVerifiedAt *time.Time          `json:"email_verified_at"`
+	Settings        userSettings        `json:"settings"`
+	MFAEnabled      bool                `json:"mfa_enabled"`
+	Workspaces      []WorkspaceResponse `json:"workspaces"`
 }
 
 type apiError struct {
@@ -38,6 +45,7 @@ type apiError struct {
 
 type userDB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
@@ -64,10 +72,10 @@ func MeHandler(db userDB) http.HandlerFunc {
 
 		var res userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
+			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language, totp_enabled 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&res.PublicID, &res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.EmailVerifiedAt, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language)
+		).Scan(&res.PublicID, &res.Email, &res.IsAdmin, &res.IsActive, &res.LastLogin, &res.EmailVerifiedAt, &res.Settings.Theme, &res.Settings.ShowCompletedDefault, &res.Settings.Language, &res.MFAEnabled)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				writeErr(w, http.StatusNotFound, "user not found")
@@ -75,6 +83,24 @@ func MeHandler(db userDB) http.HandlerFunc {
 			}
 			writeErr(w, http.StatusInternalServerError, "failed to fetch user")
 			return
+		}
+
+		// Fetch workspaces
+		rows, err := db.Query(ctx, "SELECT public_id, type FROM workspaces WHERE user_id = $1 AND type = 'user'", u.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch workspaces")
+			return
+		}
+		defer rows.Close()
+
+		res.Workspaces = make([]WorkspaceResponse, 0, 1)
+		for rows.Next() {
+			var ws WorkspaceResponse
+			if err := rows.Scan(&ws.PublicID, &ws.Type); err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to scan workspace")
+				return
+			}
+			res.Workspaces = append(res.Workspaces, ws)
 		}
 
 		writeJSON(w, http.StatusOK, res)
@@ -163,14 +189,33 @@ func UpdateMeHandler(db userDB) http.HandlerFunc {
 		// Fetch and return updated user
 		var updatedRes userMeResponse
 		err := db.QueryRow(ctx,
-			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language 
+			`SELECT public_id, email, is_admin, is_active, last_login, email_verified_at, ui_theme, show_completed_default, language, totp_enabled 
 			 FROM users WHERE id=$1`,
 			u.ID,
-		).Scan(&updatedRes.PublicID, &updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.EmailVerifiedAt, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language)
+		).Scan(&updatedRes.PublicID, &updatedRes.Email, &updatedRes.IsAdmin, &updatedRes.IsActive, &updatedRes.LastLogin, &updatedRes.EmailVerifiedAt, &updatedRes.Settings.Theme, &updatedRes.Settings.ShowCompletedDefault, &updatedRes.Settings.Language, &updatedRes.MFAEnabled)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch updated user")
 			return
 		}
+
+		// Fetch workspaces
+		rows, err := db.Query(ctx, "SELECT public_id, type FROM workspaces WHERE user_id = $1 AND type = 'user'", u.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to fetch workspaces")
+			return
+		}
+		defer rows.Close()
+
+		updatedRes.Workspaces = make([]WorkspaceResponse, 0, 1)
+		for rows.Next() {
+			var ws WorkspaceResponse
+			if err := rows.Scan(&ws.PublicID, &ws.Type); err != nil {
+				writeErr(w, http.StatusInternalServerError, "failed to scan workspace")
+				return
+			}
+			updatedRes.Workspaces = append(updatedRes.Workspaces, ws)
+		}
+
 		writeJSON(w, http.StatusOK, updatedRes)
 	}
 }

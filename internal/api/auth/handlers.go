@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"text/template"
@@ -30,7 +31,8 @@ type credentials struct {
 }
 
 type authResponse struct {
-	Token string `json:"token"`
+	Token       string `json:"token"`
+	MFARequired bool   `json:"mfa_required,omitzero"`
 }
 
 type userCreatedResponse struct {
@@ -47,9 +49,10 @@ type apiError struct {
 }
 
 type authDB interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 const minPasswordLen = 8
@@ -165,19 +168,26 @@ func SignupHandler(db authDB) http.HandlerFunc {
 
 		publicID := app.NewULID()
 
-		ctx, cancel = context.WithTimeout(r.Context(), 5*time.Second)
+		ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
+
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
 
 		var id int64
 		var tokenVersion int64
 		if requireVerification {
-			err = db.QueryRow(ctx,
+			err = tx.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, public_id) VALUES ($1, $2, $3)
 				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
 			).Scan(&id, &tokenVersion)
 		} else {
-			err = db.QueryRow(ctx,
+			err = tx.QueryRow(ctx,
 				`INSERT INTO users (email, password_hash, email_verified_at, public_id) VALUES ($1, $2, NOW(), $3)
 				 RETURNING id, token_version`,
 				email, string(hashedPassword), publicID,
@@ -192,6 +202,24 @@ func SignupHandler(db authDB) http.HandlerFunc {
 				return
 			}
 			l.Error().Err(err).Str("email", email).Msg("signup failed: database error")
+			writeErr(w, http.StatusInternalServerError, "failed to create user")
+			return
+		}
+
+		// Create a personal workspace for the new user
+		workspacePublicID := app.NewULID()
+		_, err = tx.Exec(ctx,
+			`INSERT INTO workspaces (type, user_id, public_id) VALUES ('user', $1, $2)`,
+			id, workspacePublicID,
+		)
+		if err != nil {
+			l.Error().Err(err).Int64("user_id", id).Msg("signup failed: failed to create workspace")
+			writeErr(w, http.StatusInternalServerError, "failed to create workspace")
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			l.Error().Err(err).Int64("user_id", id).Msg("signup failed: failed to commit transaction")
 			writeErr(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
@@ -248,14 +276,15 @@ func LoginHandler(db authDB) http.HandlerFunc {
 			isAdmin         bool
 			emailVerifiedAt *time.Time
 			tokenVersion    int64
+			totpEnabled     bool
 		)
 
 		err := db.QueryRow(ctx,
-			`SELECT id, password_hash, is_active, is_admin, email_verified_at, token_version
+			`SELECT id, password_hash, is_active, is_admin, email_verified_at, token_version, totp_enabled
 			 FROM users
 			 WHERE email=$1`,
 			email,
-		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt, &tokenVersion)
+		).Scan(&id, &passwordHash, &isActive, &isAdmin, &emailVerifiedAt, &tokenVersion, &totpEnabled)
 
 		// Don’t leak whether email exists.
 		if err != nil || !isActive {
@@ -289,6 +318,44 @@ func LoginHandler(db authDB) http.HandlerFunc {
 		_, _ = db.Exec(ctx, "UPDATE users SET last_login = now() WHERE id = $1", id)
 
 		l.Info().Int64("user_id", id).Str("email", email).Msg("user login successful")
+
+		allowTOTP, err := isTOTPAllowed(ctx, db)
+		if err != nil {
+			l.Error().Err(err).Msg("failed to read mfa settings")
+			writeErr(w, http.StatusInternalServerError, "failed to read mfa settings")
+			return
+		}
+
+		if totpEnabled && allowTOTP {
+			mfaToken, jti, err := authmw.SignMFAToken(id, tokenVersion)
+			if err != nil {
+				l.Error().Err(err).Msg("failed to sign mfa token")
+				writeErr(w, http.StatusInternalServerError, "failed to sign mfa token")
+				return
+			}
+
+			jtiHash := hashToken(jti)
+			expiresAt := time.Now().Add(5 * time.Minute)
+			ip := extractIP(r.RemoteAddr)
+
+			_, err = db.Exec(ctx,
+				`INSERT INTO mfa_challenges (jti_hash, user_id, expires_at, ip)
+				 VALUES ($1, $2, $3, $4)`,
+				jtiHash, id, expiresAt, ip,
+			)
+			if err != nil {
+				l.Error().Err(err).Str("jti_hash", jtiHash).Msg("failed to store mfa challenge")
+				writeErr(w, http.StatusInternalServerError, "failed to store mfa challenge")
+				return
+			}
+
+			l.Info().Int64("user_id", id).Str("jti_hash", jtiHash).Msg("mfa challenge created")
+			writeJSON(w, http.StatusOK, authResponse{
+				Token:       mfaToken,
+				MFARequired: true,
+			})
+			return
+		}
 
 		token, err := authmw.SignToken(id, tokenVersion)
 		if err != nil {
@@ -460,6 +527,22 @@ func requireEmailVerification(ctx context.Context, db authDB) (bool, error) {
 	return v, nil
 }
 
+func isTOTPAllowed(ctx context.Context, db authDB) (bool, error) {
+	var raw []byte
+	err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = 'auth.allowTOTP'").Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil // default
+		}
+		return false, err
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return false, err
+	}
+	return v, nil
+}
+
 func isPasswordResetAllowed(ctx context.Context, db authDB) (bool, error) {
 	var raw []byte
 	err := db.QueryRow(ctx, "SELECT value_json FROM config_keys WHERE key = $1", "auth.allowReset").Scan(&raw)
@@ -574,11 +657,16 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func extractIP(addr string) net.IP {
+func extractIP(addr string) netip.Addr {
 	if host, _, err := net.SplitHostPort(addr); err == nil {
-		return net.ParseIP(host)
+		if ip, err := netip.ParseAddr(host); err == nil {
+			return ip
+		}
 	}
-	return net.ParseIP(addr)
+	if ip, err := netip.ParseAddr(addr); err == nil {
+		return ip
+	}
+	return netip.Addr{}
 }
 
 func htmlToText(html string) string {
@@ -741,7 +829,7 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 			return
 		}
 
-		ip := extractIP(r.RemoteAddr).String()
+		ip := extractIP(r.RemoteAddr)
 
 		// Rate limit: check if a token was created in the last 15 minutes for this email or IP
 		var count int
@@ -753,7 +841,7 @@ func RequestPasswordResetHandler(db authDB) http.HandlerFunc {
 		`, email, ip).Scan(&count)
 
 		if err == nil && count > 0 {
-			logging.From(ctx).Info().Str("email", email).Str("ip", ip).Msg("password reset rate limited")
+			logging.From(ctx).Info().Str("email", email).Str("ip", ip.String()).Msg("password reset rate limited")
 			writeJSON(w, http.StatusOK, response{OK: true})
 			return
 		}

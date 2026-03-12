@@ -22,12 +22,62 @@ func (r fakeRow) Scan(dest ...any) error {
 	return r.scanFn(dest...)
 }
 
+type fakeRows struct {
+	rows [][]any
+	idx  int
+}
+
+func (r *fakeRows) Next() bool {
+	return r.idx < len(r.rows)
+}
+
+func (r *fakeRows) Scan(dest ...any) error {
+	if r.idx >= len(r.rows) {
+		return pgx.ErrNoRows
+	}
+	row := r.rows[r.idx]
+	for i, v := range row {
+		switch d := dest[i].(type) {
+		case *string:
+			*d = v.(string)
+		case *int64:
+			*d = v.(int64)
+		case *bool:
+			*d = v.(bool)
+		case **time.Time:
+			if v == nil {
+				*d = nil
+			} else {
+				*d = v.(*time.Time)
+			}
+		}
+	}
+	r.idx++
+	return nil
+}
+
+func (r *fakeRows) Close()                                       {}
+func (r *fakeRows) Err() error                                   { return nil }
+func (r *fakeRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (r *fakeRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (r *fakeRows) Values() ([]any, error)                       { return nil, nil }
+func (r *fakeRows) RawValues() [][]byte                          { return nil }
+func (r *fakeRows) Conn() *pgx.Conn                              { return nil }
+
 type fakeUserDB struct {
 	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
+	queryFn    func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 func (db fakeUserDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	return db.queryRowFn(ctx, sql, args...)
+}
+
+func (db fakeUserDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if db.queryFn != nil {
+		return db.queryFn(ctx, sql, args...)
+	}
+	return &fakeRows{}, nil
 }
 
 func (db fakeUserDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
@@ -48,6 +98,7 @@ func TestMeHandler_Success(t *testing.T) {
 					*dest[6].(*string) = "system"
 					*dest[7].(*bool) = false
 					*dest[8].(*string) = "en"
+					*dest[9].(*bool) = false
 					return nil
 				},
 			}
@@ -79,6 +130,9 @@ func TestMeHandler_Success(t *testing.T) {
 	}
 	if resp["is_active"] != true {
 		t.Fatalf("unexpected is_active %v", resp["is_active"])
+	}
+	if resp["mfa_enabled"] != false {
+		t.Fatalf("unexpected mfa_enabled %v", resp["mfa_enabled"])
 	}
 	if v, ok := resp["email_verified_at"]; !ok || v != nil {
 		t.Fatalf("unexpected email_verified_at %v", v)
