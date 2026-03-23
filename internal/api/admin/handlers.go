@@ -63,6 +63,15 @@ type TagResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type OrganizationResponse struct {
+	ID                int64      `json:"id"`
+	Name              string     `json:"name"`
+	WorkspacePublicID string     `json:"workspace_id"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
 type DatabaseMetricsResponse struct {
 	DatabaseSize  string  `json:"database_size"`
 	Connections   int     `json:"connections"`
@@ -1167,4 +1176,735 @@ func formatBytes(b int64) string {
 		return fmt.Sprintf("%.2f GB", float64(b)/float64(unit*unit*unit))
 	}
 	return fmt.Sprintf("%.2f TB", float64(b)/float64(unit*unit*unit*unit))
+}
+
+func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		rows, err := db.Query(ctx, `
+			SELECT o.id, o.name, w.public_id as workspace_id, o.deleted_at, o.created_at, o.updated_at
+			FROM orgs o
+			JOIN workspaces w ON w.org_id = o.id
+			ORDER BY o.id ASC
+		`)
+		if err != nil {
+			writeErr(w, "failed to list organizations", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var orgs []OrganizationResponse
+		for rows.Next() {
+			var o OrganizationResponse
+			if err := rows.Scan(&o.ID, &o.Name, &o.WorkspacePublicID, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
+				writeErr(w, "failed to scan organization", http.StatusInternalServerError)
+				return
+			}
+			orgs = append(orgs, o)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read organizations", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, orgs)
+	}
+}
+
+func UpdateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+	type request struct {
+		Name *string `json:"name"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Name != nil && *req.Name == "" {
+			writeErr(w, "name cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx,
+			`UPDATE orgs SET name = COALESCE($1, name), updated_at = now() WHERE id = $2`,
+			req.Name, id,
+		)
+		if err != nil {
+			writeErr(w, "failed to update organization", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "organization not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func RestoreOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "UPDATE orgs SET deleted_at = NULL, updated_at = now() WHERE id = $1 AND deleted_at IS NOT NULL", id)
+		if err != nil {
+			writeErr(w, "failed to restore organization", http.StatusInternalServerError)
+			return
+		}
+
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "organization not found or not deleted", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func PermanentDeleteOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx, "DELETE FROM orgs WHERE id = $1", id)
+		if err != nil {
+			writeErr(w, "failed to permanently delete organization", http.StatusInternalServerError)
+			return
+		}
+
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "organization not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func ListOrganizationProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `SELECT p.id, p.name, p.description, p.created_at, p.updated_at
+			 FROM projects p
+			 JOIN workspaces w ON w.id = p.workspace_id
+			 WHERE w.org_id = $1`
+		if !includeDeleted {
+			query += " AND p.deleted_at IS NULL"
+		}
+		query += " ORDER BY p.id"
+
+		rows, err := db.Query(ctx, query, orgID)
+		if err != nil {
+			writeErr(w, "failed to list organization projects", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		projects := make([]ProjectResponse, 0, 32)
+		for rows.Next() {
+			var p ProjectResponse
+			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
+				writeErr(w, "failed to scan project", http.StatusInternalServerError)
+				return
+			}
+			projects = append(projects, p)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read projects", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, projects)
+	}
+}
+
+func ListOrganizationTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+		includeDeletedProjects := includeDeleted
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		query := `
+			SELECT t.id, w.public_id as workspace_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at,
+			       uc.public_id as created_by,
+			       ucl.public_id as closed_by,
+			       ua.public_id as assigned_to
+			FROM tasks t
+			JOIN projects p ON p.id = t.project_id
+			JOIN workspaces w ON w.id = t.workspace_id
+			LEFT JOIN users uc ON uc.id = t.created_by
+			LEFT JOIN users ucl ON ucl.id = t.closed_by
+			LEFT JOIN users ua ON ua.id = t.assigned_to
+			WHERE w.org_id = $1
+		`
+
+		if !includeDeleted {
+			query += " AND t.deleted_at IS NULL"
+		}
+		if !includeDeletedProjects {
+			query += " AND p.deleted_at IS NULL"
+		}
+		query += " ORDER BY t.id"
+
+		rows, err := db.Query(ctx, query, orgID)
+		if err != nil {
+			writeErr(w, "failed to list organization tasks", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TaskResponse, 0, 64)
+		for rows.Next() {
+			var t TaskResponse
+			if err := rows.Scan(
+				&t.ID, &t.WorkspacePublicID, &t.ProjectID, &t.Title, &t.Description,
+				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
+				&t.RepeatEvery, &t.RepeatUnit,
+				&t.CreatedAt, &t.UpdatedAt,
+				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
+			); err != nil {
+				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read tasks", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func GetOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			writeErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var p ProjectResponse
+		query := `SELECT p.id, p.name, p.description, p.created_at, p.updated_at
+			 FROM projects p
+			 JOIN workspaces w ON w.id = p.workspace_id
+			 WHERE p.id = $1 AND w.org_id = $2 AND w.type = 'org'`
+		if !includeDeleted {
+			query += " AND p.deleted_at IS NULL"
+		}
+
+		err = db.QueryRow(ctx, query, projectID, orgID).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
+
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			writeErr(w, "failed to fetch project", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, p)
+	}
+}
+
+func UpdateOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+	type request struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			writeErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Name != nil && *req.Name == "" {
+			writeErr(w, "name cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx,
+			`UPDATE projects
+			 SET name = COALESCE($1, name),
+			     description = COALESCE($2, description),
+			     updated_at = now()
+			 WHERE id = $3 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $4 AND type = 'org') AND deleted_at IS NULL`,
+			req.Name, req.Description, projectID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to update project", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func DeleteOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			writeErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		tag, err := tx.Exec(ctx,
+			`UPDATE projects
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NULL`,
+			projectID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to delete project", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		_, err = tx.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE project_id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NULL`,
+			projectID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to delete project tasks", http.StatusInternalServerError)
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			writeErr(w, "failed to commit project delete", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func RestoreOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+	type request struct {
+		RestoreTasks *bool `json:"restore_tasks"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			writeErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		restoreTasks := true
+		var req request
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeErr(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			if req.RestoreTasks != nil {
+				restoreTasks = *req.RestoreTasks
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		tag, err := tx.Exec(ctx,
+			`UPDATE projects
+			 SET deleted_at = NULL, updated_at = now()
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NOT NULL`,
+			projectID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to restore project", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "project not found or not deleted", http.StatusNotFound)
+			return
+		}
+
+		if restoreTasks {
+			_, err := tx.Exec(ctx,
+				`UPDATE tasks
+				 SET deleted_at = NULL, updated_at = now()
+				 WHERE project_id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NOT NULL`,
+				projectID, orgID,
+			)
+			if err != nil {
+				writeErr(w, "failed to restore project tasks", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			writeErr(w, "failed to commit restore", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func DeleteOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		taskID, err := parseInt64Param(r, "taskId")
+		if err != nil || taskID <= 0 {
+			writeErr(w, "invalid task id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		tag, err := db.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = now(), updated_at = now()
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NULL`,
+			taskID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to delete task", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "task not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func RestoreOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		taskID, err := parseInt64Param(r, "taskId")
+		if err != nil || taskID <= 0 {
+			writeErr(w, "invalid task id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var projectDeleted bool
+		err = db.QueryRow(ctx,
+			`SELECT (p.deleted_at IS NOT NULL) AS project_deleted
+			 FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 JOIN workspaces w ON w.id = t.workspace_id
+			 WHERE t.id = $1 AND w.org_id = $2 AND w.type = 'org'`,
+			taskID, orgID,
+		).Scan(&projectDeleted)
+
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, "task not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			writeErr(w, "failed to verify task", http.StatusInternalServerError)
+			return
+		}
+
+		if projectDeleted {
+			writeErr(w, "cannot restore task while its project is deleted (restore project first)", http.StatusConflict)
+			return
+		}
+
+		tag, err := db.Exec(ctx,
+			`UPDATE tasks
+			 SET deleted_at = NULL, updated_at = now()
+			 WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND deleted_at IS NOT NULL`,
+			taskID, orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to restore task", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "task not found or not deleted", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func ListOrganizationProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		projectID, err := parseInt64Param(r, "projectId")
+		if err != nil || projectID <= 0 {
+			writeErr(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var projectOK bool
+		if err := db.QueryRow(ctx,
+			`SELECT EXISTS(
+			   SELECT 1 FROM projects
+			   WHERE id=$1 AND workspace_id=(SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org') AND ($3::boolean = true OR deleted_at IS NULL)
+			 )`,
+			projectID, orgID, includeDeleted,
+		).Scan(&projectOK); err != nil {
+			writeErr(w, "failed to verify project", http.StatusInternalServerError)
+			return
+		}
+		if !projectOK {
+			writeErr(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		query := `
+			SELECT t.id, w.public_id as workspace_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at,
+			       uc.public_id as created_by,
+			       ucl.public_id as closed_by,
+			       ua.public_id as assigned_to
+			FROM tasks t
+			JOIN projects p ON p.id = t.project_id
+			JOIN workspaces w ON w.id = t.workspace_id
+			LEFT JOIN users uc ON uc.id = t.created_by
+			LEFT JOIN users ucl ON ucl.id = t.closed_by
+			LEFT JOIN users ua ON ua.id = t.assigned_to
+			WHERE w.org_id = $1 AND t.project_id = $2 AND w.type = 'org'
+		`
+		if !includeDeleted {
+			query += " AND t.deleted_at IS NULL"
+		}
+		query += " ORDER BY t.id"
+
+		rows, err := db.Query(ctx, query, orgID, projectID)
+		if err != nil {
+			writeErr(w, "failed to list tasks", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TaskResponse, 0, 64)
+		for rows.Next() {
+			var t TaskResponse
+			if err := rows.Scan(
+				&t.ID, &t.WorkspacePublicID, &t.ProjectID, &t.Title, &t.Description,
+				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
+				&t.RepeatEvery, &t.RepeatUnit,
+				&t.CreatedAt, &t.UpdatedAt,
+				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
+			); err != nil {
+				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read tasks", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func ListOrganizationTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `
+			SELECT id, name, created_at, updated_at
+			FROM tags
+			WHERE workspace_id = (SELECT id FROM workspaces WHERE org_id = $1 AND type = 'org')`
+		args := []any{orgID}
+		if q != "" {
+			query += ` AND name ILIKE '%' || $2 || '%'`
+			args = append(args, q)
+		}
+		query += ` ORDER BY name, id`
+
+		rows, err := db.Query(ctx, query, args...)
+		if err != nil {
+			writeErr(w, "failed to list tags", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		out := make([]TagResponse, 0, 64)
+		for rows.Next() {
+			var t TagResponse
+			if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.UpdatedAt); err != nil {
+				writeErr(w, "failed to read tags", http.StatusInternalServerError)
+				return
+			}
+			out = append(out, t)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read tags", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func DeleteOrganizationTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+		tagID, err := parseInt64Param(r, "tagId")
+		if err != nil || tagID <= 0 {
+			writeErr(w, "invalid tag id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		query := `DELETE FROM tags WHERE id = $1 AND workspace_id = (SELECT id FROM workspaces WHERE org_id = $2 AND type = 'org')`
+		tag, err := db.Exec(ctx, query, tagID, orgID)
+		if err != nil {
+			writeErr(w, "failed to delete tag", http.StatusInternalServerError)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, "tag not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

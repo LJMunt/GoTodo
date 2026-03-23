@@ -104,6 +104,7 @@ func NewRouter(deps app.Deps) chi.Router {
 				users.Routes(r, deps)
 			})
 			r.Route("/orgs", func(r chi.Router) {
+				r.Use(orgs.OrganizationsEnabled(deps.DB))
 				orgs.Routes(r, deps)
 			})
 

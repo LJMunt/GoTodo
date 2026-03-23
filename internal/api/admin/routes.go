@@ -54,4 +54,36 @@ func Routes(r chi.Router, deps app.Deps) {
 			r.Delete("/{tagId}", DeleteUserTagHandler(deps.DB))
 		})
 	})
+
+	r.Route("/orgs", func(r chi.Router) {
+		r.Get("/", ListOrganizationsHandler(deps.DB))
+		r.Route("/{id}", func(r chi.Router) {
+			r.Patch("/", UpdateOrganizationHandler(deps.DB))
+			r.Delete("/permanent", PermanentDeleteOrganizationHandler(deps.DB))
+			r.Post("/restore", RestoreOrganizationHandler(deps.DB))
+
+			r.Route("/projects", func(r chi.Router) {
+				r.Get("/", ListOrganizationProjectsHandler(deps.DB))
+				r.Get("/{projectId}", GetOrganizationProjectHandler(deps.DB))
+				r.Patch("/{projectId}", UpdateOrganizationProjectHandler(deps.DB))
+				r.Delete("/{projectId}", DeleteOrganizationProjectHandler(deps.DB))
+				r.Post("/{projectId}/restore", RestoreOrganizationProjectHandler(deps.DB))
+			})
+
+			r.Route("/tasks", func(r chi.Router) {
+				r.Get("/", ListOrganizationTasksHandler(deps.DB))
+				r.Delete("/{taskId}", DeleteOrganizationTaskHandler(deps.DB))
+				r.Post("/{taskId}/restore", RestoreOrganizationTaskHandler(deps.DB))
+			})
+
+			r.Route("/projects/{projectId}/tasks", func(r chi.Router) {
+				r.Get("/", ListOrganizationProjectTasksHandler(deps.DB))
+			})
+
+			r.Route("/tags", func(r chi.Router) {
+				r.Get("/", ListOrganizationTagsHandler(deps.DB))
+				r.Delete("/{tagId}", DeleteOrganizationTagHandler(deps.DB))
+			})
+		})
+	})
 }

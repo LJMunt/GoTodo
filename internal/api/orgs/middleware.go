@@ -1,13 +1,19 @@
 package orgs
 
 import (
+	"context"
 	"net/http"
 
 	authmw "GoToDo/internal/auth"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func RequireOrgAdmin(db *pgxpool.Pool) func(http.Handler) http.Handler {
+type dbExecutor interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func RequireOrgAdmin(db dbExecutor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := authmw.FromContext(r.Context())
@@ -42,7 +48,7 @@ func RequireOrgAdmin(db *pgxpool.Pool) func(http.Handler) http.Handler {
 	}
 }
 
-func OrganizationsEnabled(db *pgxpool.Pool) func(http.Handler) http.Handler {
+func OrganizationsEnabled(db dbExecutor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var enabled bool

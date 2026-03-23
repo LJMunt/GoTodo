@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type OrganizationResponse struct {
@@ -50,7 +50,14 @@ func parseInt64Param(r *http.Request, key string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
-func CreateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+type orgDB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+func CreateOrganizationHandler(db orgDB) http.HandlerFunc {
 	type request struct {
 		Name string `json:"name"`
 	}
@@ -127,7 +134,7 @@ func CreateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationsHandler(db orgDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
@@ -170,7 +177,7 @@ func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func UpdateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateOrganizationHandler(db orgDB) http.HandlerFunc {
 	type request struct {
 		Name string `json:"name"`
 	}
@@ -212,7 +219,7 @@ func UpdateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteOrganizationHandler(db orgDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -240,7 +247,7 @@ func DeleteOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func AddMemberHandler(db *pgxpool.Pool) http.HandlerFunc {
+func AddMemberHandler(db orgDB) http.HandlerFunc {
 	type request struct {
 		UserID string `json:"user_id"` // PublicID
 		Role   string `json:"role"`
@@ -298,7 +305,7 @@ func AddMemberHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RemoveMemberHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RemoveMemberHandler(db orgDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -340,7 +347,7 @@ func RemoveMemberHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListMembersHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListMembersHandler(db orgDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {

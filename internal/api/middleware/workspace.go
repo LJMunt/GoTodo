@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -9,11 +10,28 @@ import (
 	authmw "GoToDo/internal/auth"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, apiError{Error: msg})
+}
+
+type dbExecutor interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // ResolveWorkspace resolves and authorizes the active workspace from the X-Workspace-ID header.
-func ResolveWorkspace(db *pgxpool.Pool) func(http.Handler) http.Handler {
+func ResolveWorkspace(db dbExecutor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := authmw.FromContext(r.Context())
@@ -47,10 +65,10 @@ func ResolveWorkspace(db *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			if err != nil {
 				if err == pgx.ErrNoRows {
-					http.Error(w, "workspace not found", http.StatusNotFound)
+					writeErr(w, http.StatusNotFound, "workspace not found")
 					return
 				}
-				http.Error(w, "failed to resolve workspace", http.StatusInternalServerError)
+				writeErr(w, http.StatusInternalServerError, "failed to resolve workspace")
 				return
 			}
 
@@ -58,12 +76,22 @@ func ResolveWorkspace(db *pgxpool.Pool) func(http.Handler) http.Handler {
 			if workspaceType == "user" {
 				// Personal workspace can only be accessed by its owner
 				if ownerUserID == nil || *ownerUserID != user.ID {
-					http.Error(w, "forbidden: unauthorized workspace access", http.StatusForbidden)
+					writeErr(w, http.StatusForbidden, "forbidden: unauthorized workspace access")
 					return
 				}
 			} else if workspaceType == "org" {
+				// Check organizations feature flag
+				var enabled bool
+				err := db.QueryRow(ctx,
+					`SELECT value_json FROM config_keys WHERE key = 'features.organizations'`,
+				).Scan(&enabled)
+				if err != nil || !enabled {
+					writeErr(w, http.StatusNotFound, "organizations feature is disabled")
+					return
+				}
+
 				if ownerOrgID == nil {
-					http.Error(w, "invalid organization workspace", http.StatusInternalServerError)
+					writeErr(w, http.StatusInternalServerError, "invalid organization workspace")
 					return
 				}
 
@@ -79,16 +107,16 @@ func ResolveWorkspace(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				).Scan(&isMember)
 
 				if err != nil {
-					http.Error(w, "failed to verify organization access", http.StatusInternalServerError)
+					writeErr(w, http.StatusInternalServerError, "failed to verify organization access")
 					return
 				}
 
 				if !isMember {
-					http.Error(w, "forbidden: unauthorized workspace access", http.StatusForbidden)
+					writeErr(w, http.StatusForbidden, "forbidden: unauthorized workspace access")
 					return
 				}
 			} else {
-				http.Error(w, "invalid workspace type", http.StatusInternalServerError)
+				writeErr(w, http.StatusInternalServerError, "invalid workspace type")
 				return
 			}
 
