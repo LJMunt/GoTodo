@@ -2,6 +2,7 @@ package api
 
 import (
 	"GoToDo/internal/api/agenda"
+	"GoToDo/internal/api/orgs"
 	"GoToDo/internal/api/projects"
 	"GoToDo/internal/api/tags"
 	"GoToDo/internal/api/tasks"
@@ -23,6 +24,8 @@ import (
 	"github.com/go-chi/httprate"
 	"github.com/unrolled/secure"
 )
+
+// Main Router
 
 func NewRouter(deps app.Deps) chi.Router {
 	r := chi.NewRouter()
@@ -48,8 +51,8 @@ func NewRouter(deps app.Deps) chi.Router {
 	r.Use(middleware.CleanPath)
 	r.Use(BodyLimitByPath(deps.Config.Server.MaxBodyBytes, deps.Config.Server.AdminMaxBodyBytes, "/api/v1/admin"))
 
-	// Global rate limit: 100 requests per minute per IP
-	r.Use(httprate.LimitByIP(100, 1*time.Minute))
+	// Global rate limit: 200 requests per minute per IP
+	r.Use(httprate.LimitByIP(200, 1*time.Minute))
 
 	r.Use(authmw.ReadOnly(deps.DB))
 
@@ -97,6 +100,9 @@ func NewRouter(deps app.Deps) chi.Router {
 
 			r.Route("/users", func(r chi.Router) {
 				users.Routes(r, deps)
+			})
+			r.Route("/orgs", func(r chi.Router) {
+				orgs.Routes(r, deps)
 			})
 
 			r.Route("/projects", func(r chi.Router) {
