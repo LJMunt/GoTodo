@@ -16,6 +16,9 @@ type ConfigStatusResponse struct {
 	Instance struct {
 		ReadOnly bool `json:"readOnly"`
 	} `json:"instance"`
+	Features struct {
+		Organizations bool `json:"organizations"`
+	} `json:"features"`
 }
 
 func GetConfigStatusHandler(db configQuerier) http.HandlerFunc {
@@ -28,7 +31,7 @@ func GetConfigStatusHandler(db configQuerier) http.HandlerFunc {
 		rows, err := db.Query(ctx, `
 			SELECT key, value_json 
 			FROM config_keys 
-			WHERE key IN ('auth.allowSignup', 'auth.requireEmailVerification', 'auth.allowReset', 'auth.allowTOTP', 'instance.readOnly')
+			WHERE key IN ('auth.allowSignup', 'auth.requireEmailVerification', 'auth.allowReset', 'auth.allowTOTP', 'instance.readOnly', 'features.organizations')
 		`)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to fetch status")
@@ -53,6 +56,8 @@ func GetConfigStatusHandler(db configQuerier) http.HandlerFunc {
 				status.Auth.AllowTOTP = castConfigValue(val, "boolean").(bool)
 			case "instance.readOnly":
 				status.Instance.ReadOnly = castConfigValue(val, "boolean").(bool)
+			case "features.organizations":
+				status.Features.Organizations = castConfigValue(val, "boolean").(bool)
 			}
 		}
 

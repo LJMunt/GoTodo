@@ -272,3 +272,33 @@ func DeleteMeHandler(db userDB) http.HandlerFunc {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+func SearchUsersHandler(db userDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		email := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("email")))
+		if email == "" {
+			writeErr(w, http.StatusBadRequest, "email parameter is required")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		var res struct {
+			PublicID string `json:"public_id"`
+			Email    string `json:"email"`
+		}
+
+		err := db.QueryRow(ctx, "SELECT public_id, email FROM users WHERE email = $1 AND is_active = true", email).Scan(&res.PublicID, &res.Email)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, "user not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "failed to search user")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, res)
+	}
+}

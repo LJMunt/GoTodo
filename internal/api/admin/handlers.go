@@ -1908,3 +1908,54 @@ func DeleteOrganizationTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+func ListOrganizationMembersHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		rows, err := db.Query(ctx,
+			`SELECT u.id, u.public_id, u.email, om.role, om.joined_at
+			 FROM org_members om
+			 JOIN users u ON u.id = om.user_id
+			 WHERE om.org_id = $1
+			 ORDER BY om.joined_at ASC`,
+			orgID,
+		)
+		if err != nil {
+			writeErr(w, "failed to list members", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type memberResponse struct {
+			ID       int64     `json:"id"`
+			PublicID string    `json:"public_id"`
+			Email    string    `json:"email"`
+			Role     string    `json:"role"`
+			JoinedAt time.Time `json:"joined_at"`
+		}
+
+		var members []memberResponse
+		for rows.Next() {
+			var m memberResponse
+			if err := rows.Scan(&m.ID, &m.PublicID, &m.Email, &m.Role, &m.JoinedAt); err != nil {
+				writeErr(w, "failed to scan member", http.StatusInternalServerError)
+				return
+			}
+			members = append(members, m)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, "failed to read members", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, members)
+	}
+}

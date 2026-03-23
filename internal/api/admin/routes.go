@@ -84,6 +84,8 @@ func Routes(r chi.Router, deps app.Deps) {
 				r.Get("/", ListOrganizationTagsHandler(deps.DB))
 				r.Delete("/{tagId}", DeleteOrganizationTagHandler(deps.DB))
 			})
+
+			r.Get("/members", ListOrganizationMembersHandler(deps.DB))
 		})
 	})
 }

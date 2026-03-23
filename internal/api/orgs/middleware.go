@@ -30,7 +30,7 @@ func RequireOrgAdmin(db dbExecutor) func(http.Handler) http.Handler {
 
 			var role string
 			err = db.QueryRow(r.Context(),
-				`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
+				`SELECT om.role FROM org_members om JOIN orgs o ON o.id = om.org_id WHERE om.org_id = $1 AND om.user_id = $2 AND o.deleted_at IS NULL`,
 				orgID, user.ID,
 			).Scan(&role)
 			if err != nil {
@@ -40,6 +40,41 @@ func RequireOrgAdmin(db dbExecutor) func(http.Handler) http.Handler {
 
 			if role != "admin" {
 				writeErr(w, http.StatusForbidden, "forbidden: organization admin access required")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func RequireOrgMember(db dbExecutor) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := authmw.FromContext(r.Context())
+			if !ok {
+				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+
+			orgID, err := parseInt64Param(r, "id")
+			if err != nil || orgID <= 0 {
+				writeErr(w, http.StatusBadRequest, "invalid organization id")
+				return
+			}
+
+			var exists bool
+			err = db.QueryRow(r.Context(),
+				`SELECT EXISTS(
+				   SELECT 1
+				   FROM org_members om
+				   JOIN orgs o ON o.id = om.org_id
+				   WHERE om.org_id = $1 AND om.user_id = $2 AND o.deleted_at IS NULL
+				)`,
+				orgID, user.ID,
+			).Scan(&exists)
+			if err != nil || !exists {
+				writeErr(w, http.StatusForbidden, "forbidden: not a member of this organization")
 				return
 			}
 

@@ -27,6 +27,7 @@ type OrganizationResponse struct {
 
 type MemberResponse struct {
 	UserID   string    `json:"user_id"` // PublicID
+	Email    string    `json:"email"`
 	Role     string    `json:"role"`
 	JoinedAt time.Time `json:"joined_at"`
 }
@@ -347,6 +348,86 @@ func RemoveMemberHandler(db orgDB) http.HandlerFunc {
 	}
 }
 
+func GetOrganizationHandler(db orgDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid organization id")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		var o OrganizationResponse
+		err = db.QueryRow(ctx,
+			`SELECT o.id, o.name, w.public_id, o.deleted_at, o.created_at, o.updated_at
+			 FROM orgs o
+			 JOIN workspaces w ON w.org_id = o.id
+			 WHERE o.id = $1 AND o.deleted_at IS NULL`,
+			orgID,
+		).Scan(&o.ID, &o.Name, &o.WorkspacePublicID, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, "organization not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "failed to read organization")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, o)
+	}
+}
+
+func LeaveOrganizationHandler(db orgDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := authmw.FromContext(r.Context())
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		orgID, err := parseInt64Param(r, "id")
+		if err != nil || orgID <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid organization id")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		// Check if user is the last admin
+		var role string
+		err = db.QueryRow(ctx, "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2", orgID, user.ID).Scan(&role)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "not a member of this organization")
+			return
+		}
+
+		if role == "admin" {
+			var adminCount int
+			err = db.QueryRow(ctx, "SELECT count(*) FROM org_members WHERE org_id = $1 AND role = 'admin'", orgID).Scan(&adminCount)
+			if err == nil && adminCount <= 1 {
+				writeErr(w, http.StatusBadRequest, "cannot leave organization as the last admin. delete the organization instead.")
+				return
+			}
+		}
+
+		tag, err := db.Exec(ctx, `DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`, orgID, user.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to leave organization")
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeErr(w, http.StatusNotFound, "not a member of this organization")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func ListMembersHandler(db orgDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
@@ -359,7 +440,7 @@ func ListMembersHandler(db orgDB) http.HandlerFunc {
 		defer cancel()
 
 		rows, err := db.Query(ctx,
-			`SELECT u.public_id, om.role, om.joined_at
+			`SELECT u.public_id, u.email, om.role, om.joined_at
 			 FROM org_members om
 			 JOIN users u ON u.id = om.user_id
 			 WHERE om.org_id = $1
@@ -375,7 +456,7 @@ func ListMembersHandler(db orgDB) http.HandlerFunc {
 		var members []MemberResponse
 		for rows.Next() {
 			var m MemberResponse
-			if err := rows.Scan(&m.UserID, &m.Role, &m.JoinedAt); err != nil {
+			if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.JoinedAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read members")
 				return
 			}

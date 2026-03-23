@@ -212,3 +212,104 @@ func TestRequireOrgAdmin_Middleware(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireOrgMember_Middleware(t *testing.T) {
+	tests := []struct {
+		name     string
+		exists   bool
+		expected int
+	}{
+		{"Member", true, http.StatusOK},
+		{"NotMember", false, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := fakeDB{
+				queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
+					return fakeRow{scanFn: func(dest ...any) error {
+						*dest[0].(*bool) = tt.exists
+						return nil
+					}}
+				},
+			}
+
+			handler := RequireOrgMember(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/orgs/123", nil)
+			req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 1}))
+			// chi param
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "123")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.expected {
+				t.Errorf("expected status %d, got %d", tt.expected, rec.Code)
+			}
+		})
+	}
+}
+
+func TestLeaveOrganizationHandler(t *testing.T) {
+	t.Run("MemberLeaves", func(t *testing.T) {
+		db := fakeDB{
+			queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+				if strings.Contains(sql, "SELECT role FROM org_members") {
+					return fakeRow{scanFn: func(dest ...any) error { *dest[0].(*string) = "member"; return nil }}
+				}
+				if strings.Contains(sql, "count(*)") {
+					return fakeRow{scanFn: func(dest ...any) error { *dest[0].(*int) = 2; return nil }}
+				}
+				return fakeRow{scanFn: func(_ ...any) error { return nil }}
+			},
+			execFn: func(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+				return pgconn.NewCommandTag("DELETE 1"), nil
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/orgs/10/leave", nil)
+		req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 7}))
+		// chi param
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "10")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		rec := httptest.NewRecorder()
+		LeaveOrganizationHandler(db).ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("LastAdminForbidden", func(t *testing.T) {
+		db := fakeDB{
+			queryRowFn: func(_ context.Context, sql string, _ ...any) pgx.Row {
+				if strings.Contains(sql, "SELECT role FROM org_members") {
+					return fakeRow{scanFn: func(dest ...any) error { *dest[0].(*string) = "admin"; return nil }}
+				}
+				if strings.Contains(sql, "count(*)") {
+					return fakeRow{scanFn: func(dest ...any) error { *dest[0].(*int) = 1; return nil }}
+				}
+				return fakeRow{scanFn: func(_ ...any) error { return nil }}
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/orgs/10/leave", nil)
+		req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 7}))
+		// chi param
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "10")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		rec := httptest.NewRecorder()
+		LeaveOrganizationHandler(db).ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
