@@ -47,8 +47,13 @@ type TaskResponse struct {
 	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
 	RepeatEvery       *int       `json:"repeat_every,omitempty"`
 	RepeatUnit        *string    `json:"repeat_unit,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+
+	CreatedBy  string  `json:"created_by"`
+	ClosedBy   *string `json:"closed_by,omitempty"`
+	AssignedTo *string `json:"assigned_to,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TagResponse struct {
@@ -838,12 +843,17 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// Join projects so we can optionally filter on project deleted_at too.
 		query := `
-			SELECT t.id, u.public_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
-			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
+			SELECT t.id, w.public_id as workspace_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at,
+			       uc.public_id as created_by,
+			       ucl.public_id as closed_by,
+			       ua.public_id as assigned_to
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
 			JOIN workspaces w ON w.id = t.workspace_id
-			JOIN users u ON u.id = w.user_id
+			LEFT JOIN users uc ON uc.id = t.created_by
+			LEFT JOIN users ucl ON ucl.id = t.closed_by
+			LEFT JOIN users ua ON ua.id = t.assigned_to
 			WHERE w.user_id = $1 AND w.type = 'user'
 		`
 
@@ -870,6 +880,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
+				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
 			); err != nil {
 				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 				return
@@ -922,12 +933,17 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		query := `
-			SELECT t.id, u.public_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
-			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at
+			SELECT t.id, w.public_id as workspace_id, t.project_id, t.title, t.description, t.due_at, t.completed_at, t.deleted_at,
+			       t.repeat_every, t.repeat_unit, t.created_at, t.updated_at,
+			       uc.public_id as created_by,
+			       ucl.public_id as closed_by,
+			       ua.public_id as assigned_to
 			FROM tasks t
 			JOIN projects p ON p.id = t.project_id
 			JOIN workspaces w ON w.id = t.workspace_id
-			JOIN users u ON u.id = w.user_id
+			LEFT JOIN users uc ON uc.id = t.created_by
+			LEFT JOIN users ucl ON ucl.id = t.closed_by
+			LEFT JOIN users ua ON ua.id = t.assigned_to
 			WHERE w.user_id = $1 AND t.project_id = $2 AND w.type = 'user'
 		`
 		if !includeDeleted {
@@ -952,6 +968,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.CreatedAt, &t.UpdatedAt,
+				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
 			); err != nil {
 				writeErr(w, "failed to read tasks", http.StatusInternalServerError)
 				return

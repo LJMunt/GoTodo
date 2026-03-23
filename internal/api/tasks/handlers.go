@@ -37,6 +37,10 @@ type TaskResponse struct {
 	RecurrenceStartAt *time.Time `json:"recurrence_start_at,omitempty"`
 	NextDueAt         *time.Time `json:"next_due_at,omitempty"`
 
+	CreatedBy  string  `json:"created_by"`
+	ClosedBy   *string `json:"closed_by,omitempty"`
+	AssignedTo *string `json:"assigned_to,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -219,22 +223,22 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var wsID int64
 		err = tx.QueryRow(ctx,
-			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at, created_by)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10)
 			 RETURNING id, workspace_id, project_id, title, description,
 			           due_at, completed_at, deleted_at,
 			           repeat_every, repeat_unit,
 			           recurrence_start_at, next_due_at,
-			           created_at, updated_at`,
+			           created_at, updated_at, created_by`,
 			user.WorkspaceID, projectID, req.Title, req.Description,
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
-			recurrenceStartAt, nextDueAt,
+			recurrenceStartAt, nextDueAt, user.ID,
 		).Scan(
 			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
-			&t.CreatedAt, &t.UpdatedAt,
+			&t.CreatedAt, &t.UpdatedAt, &t.CreatedBy,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to create task")
@@ -318,14 +322,20 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(ctx,
-			`SELECT id, workspace_id, project_id, title, description,
-			        due_at, completed_at, deleted_at,
-			        repeat_every, repeat_unit,
-			        recurrence_start_at, next_due_at,
-			        created_at, updated_at
-			 FROM tasks
-			 WHERE workspace_id=$1 AND project_id=$2 AND deleted_at IS NULL
-			 ORDER BY id`,
+			`SELECT t.id, t.workspace_id, t.project_id, t.title, t.description,
+			        t.due_at, t.completed_at, t.deleted_at,
+			        t.repeat_every, t.repeat_unit,
+			        t.recurrence_start_at, t.next_due_at,
+			        t.created_at, t.updated_at,
+			        uc.public_id as created_by,
+			        ucl.public_id as closed_by,
+			        ua.public_id as assigned_to
+			 FROM tasks t
+			 LEFT JOIN users uc ON uc.id = t.created_by
+			 LEFT JOIN users ucl ON ucl.id = t.closed_by
+			 LEFT JOIN users ua ON ua.id = t.assigned_to
+			 WHERE t.workspace_id=$1 AND t.project_id=$2 AND t.deleted_at IS NULL
+			 ORDER BY t.id`,
 			user.WorkspaceID, projectID,
 		)
 		if err != nil {
@@ -346,6 +356,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 				&t.RepeatEvery, &t.RepeatUnit,
 				&t.RecurrenceStartAt, &t.NextDueAt,
 				&t.CreatedAt, &t.UpdatedAt,
+				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
 			); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
 				return
@@ -428,9 +439,15 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			        t.due_at, t.completed_at, t.deleted_at,
 			        t.repeat_every, t.repeat_unit,
 			        t.recurrence_start_at, t.next_due_at,
-			        t.created_at, t.updated_at
+			        t.created_at, t.updated_at,
+			        uc.public_id as created_by,
+			        ucl.public_id as closed_by,
+			        ua.public_id as assigned_to
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
+			 LEFT JOIN users uc ON uc.id = t.created_by
+			 LEFT JOIN users ucl ON ucl.id = t.closed_by
+			 LEFT JOIN users ua ON ua.id = t.assigned_to
 			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
 			taskID, user.WorkspaceID,
 		).Scan(
@@ -439,6 +456,7 @@ func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
 			&t.CreatedAt, &t.UpdatedAt,
+			&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
 		)
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -549,12 +567,13 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 			curRecStart *time.Time
 			curNextDue  *time.Time
+			curClosedBy *int64
 		)
 
 		err = tx.QueryRow(ctx,
 			`SELECT t.project_id, t.title, t.description, t.due_at, t.completed_at,
 			        t.repeat_every, t.repeat_unit,
-			        t.recurrence_start_at, t.next_due_at
+			        t.recurrence_start_at, t.next_due_at, t.closed_by
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
 			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
@@ -562,7 +581,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		).Scan(
 			&projectID, &curTitle, &curDesc, &curDueAt, &curCompletedAt,
 			&curRepeatEvery, &curRepeatUnit,
-			&curRecStart, &curNextDue,
+			&curRecStart, &curNextDue, &curClosedBy,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "task not found")
@@ -616,12 +635,15 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		// Completion timestamp for non-recurring tasks only
 		var newCompletedAt = curCompletedAt
+		var newClosedBy = curClosedBy
 		if req.Completed != nil {
 			if *req.Completed {
 				now := time.Now().UTC()
 				newCompletedAt = &now
+				newClosedBy = &user.ID
 			} else {
 				newCompletedAt = nil
+				newClosedBy = nil
 			}
 		}
 
@@ -714,8 +736,9 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     repeat_unit=$6,
 			     recurrence_start_at=$7,
 			     next_due_at=$8,
+			     closed_by=$9,
 			     updated_at=now()
-			 WHERE id=$9 AND workspace_id=$10 AND deleted_at IS NULL
+			 WHERE id=$10 AND workspace_id=$11 AND deleted_at IS NULL
 			 RETURNING next_due_at`,
 			newTitle,
 			newDesc,
@@ -725,6 +748,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			newRepeatUnit,
 			newRecStart,
 			newNextDue,
+			newClosedBy,
 			taskID,
 			user.WorkspaceID,
 		).Scan(&newNextDue)
