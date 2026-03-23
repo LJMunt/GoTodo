@@ -3,6 +3,7 @@ package projects
 import (
 	authmw "GoToDo/internal/auth"
 	"GoToDo/internal/logging"
+	"GoToDo/internal/models"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,16 +18,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type apiError struct {
+	Error string `json:"error"`
+}
+
 type ProjectResponse struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
 	Description *string   `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-type apiError struct {
-	Error string `json:"error"`
 }
 
 type projectQuerier interface {
@@ -154,13 +155,13 @@ func GetProjectHandler(db projectQuerier) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		var p ProjectResponse
+		var m models.Project
 		err = db.QueryRow(ctx,
-			`SELECT id, name, description, created_at, updated_at
+			`SELECT id, workspace_id, name, description, created_at, updated_at
 			 FROM projects
 			 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
 			id, user.WorkspaceID,
-		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
+		).Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Description, &m.CreatedAt, &m.UpdatedAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "project not found")
@@ -171,6 +172,7 @@ func GetProjectHandler(db projectQuerier) http.HandlerFunc {
 			return
 		}
 
+		p := ProjectResponse{ID: m.ID, Name: m.Name, Description: m.Description, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 		writeJSON(w, http.StatusOK, p)
 	}
 }

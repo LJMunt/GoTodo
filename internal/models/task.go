@@ -4,7 +4,7 @@ import "time"
 
 type Task struct {
 	ID                int64      `json:"id"`
-	WorkspaceID       int64      `json:"workspace_id"`
+	WorkspaceID       int64      `json:"-"`
 	ProjectID         int64      `json:"project_id"`
 	Title             string     `json:"title"`
 	Description       *string    `json:"description,omitempty"`
@@ -15,9 +15,9 @@ type Task struct {
 	RepeatUnit        *string    `json:"repeat_unit,omitempty"`
 	RecurrenceStartAt *time.Time `json:"recurrence_start_at,omitempty"`
 	NextDueAt         *time.Time `json:"next_due_at,omitempty"`
-	CreatedBy         int64      `json:"created_by"`
-	ClosedBy          *int64     `json:"closed_by,omitempty"`
-	AssignedTo        *int64     `json:"assigned_to,omitempty"`
+	CreatedBy         int64      `json:"-"`
+	ClosedBy          *int64     `json:"-"`
+	AssignedTo        *int64     `json:"-"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
