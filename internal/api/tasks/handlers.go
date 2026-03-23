@@ -117,6 +117,47 @@ func RecurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, ta
 	return ok, err
 }
 
+func resolveAssignedTo(ctx context.Context, db *pgxpool.Pool, workspaceID int64, publicID string) (*int64, error) {
+	// 1. Resolve publicID to internal user ID
+	var userID int64
+	err := db.QueryRow(ctx, "SELECT id FROM users WHERE public_id = $1 AND is_active = true", publicID).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("user not found or inactive")
+		}
+		return nil, err
+	}
+
+	// 2. Resolve workspace info to check membership
+	var wsType string
+	var wsUserID *int64
+	var wsOrgID *int64
+	err = db.QueryRow(ctx, "SELECT type, user_id, org_id FROM workspaces WHERE id = $1", workspaceID).Scan(&wsType, &wsUserID, &wsOrgID)
+	if err != nil {
+		return nil, err
+	}
+
+	if wsType == "user" {
+		if wsUserID != nil && *wsUserID == userID {
+			return &userID, nil
+		}
+		return nil, errors.New("user is not the owner of this personal workspace")
+	} else if wsType == "org" {
+		// Check if user is a member of the organization
+		var isMember bool
+		err = db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)", *wsOrgID, userID).Scan(&isMember)
+		if err != nil {
+			return nil, err
+		}
+		if isMember {
+			return &userID, nil
+		}
+		return nil, errors.New("user is not a member of this organization")
+	}
+
+	return nil, errors.New("invalid workspace type")
+}
+
 func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	type request struct {
 		Title       string     `json:"title"`
@@ -124,6 +165,7 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		DueAt       *time.Time `json:"due_at"`
 		RepeatEvery *int       `json:"repeat_every"`
 		RepeatUnit  *string    `json:"repeat_unit"`
+		AssignedTo  *string    `json:"assigned_to"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +220,16 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 
+		var assignedToID *int64
+		if req.AssignedTo != nil && *req.AssignedTo != "" {
+			var err error
+			assignedToID, err = resolveAssignedTo(ctx, db, user.WorkspaceID, *req.AssignedTo)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid assignee: "+err.Error())
+				return
+			}
+		}
+
 		// Ensure project exists, belongs to workspace, and is not deleted
 		var projectOK bool
 		if err := db.QueryRow(ctx,
@@ -223,28 +275,30 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 
 		var wsID int64
 		err = tx.QueryRow(ctx,
-			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at, created_by)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10)
+			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at, created_by, assigned_to)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10, $11)
 			 RETURNING id, workspace_id, project_id, title, description,
 			           due_at, completed_at, deleted_at,
 			           repeat_every, repeat_unit,
 			           recurrence_start_at, next_due_at,
-			           created_at, updated_at, created_by`,
+			           created_at, updated_at`,
 			user.WorkspaceID, projectID, req.Title, req.Description,
 			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
-			recurrenceStartAt, nextDueAt, user.ID,
+			recurrenceStartAt, nextDueAt, user.ID, assignedToID,
 		).Scan(
 			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
 			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
 			&t.RepeatEvery, &t.RepeatUnit,
 			&t.RecurrenceStartAt, &t.NextDueAt,
-			&t.CreatedAt, &t.UpdatedAt, &t.CreatedBy,
+			&t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to create task")
 			return
 		}
 		t.WorkspacePublicID = user.WorkspacePublicID
+		t.CreatedBy = user.PublicID
+		t.AssignedTo = req.AssignedTo
 
 		// If recurring, ensure the first occurrence exists (history basis)
 		if recurring {
@@ -498,6 +552,9 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		RepeatEvery *int    `json:"repeat_every"`
 		RepeatUnit  *string `json:"repeat_unit"`
 		ClearRepeat *bool   `json:"clear_repeat"`
+
+		AssignedTo      *string `json:"assigned_to"`
+		ClearAssignedTo *bool   `json:"clear_assigned_to"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -543,6 +600,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		clearDue := req.ClearDueAt != nil && *req.ClearDueAt
+		clearAssignedTo := req.ClearAssignedTo != nil && *req.ClearAssignedTo
 
 		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 		defer cancel()
@@ -565,15 +623,16 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			curRepeatEvery *int
 			curRepeatUnit  *string
 
-			curRecStart *time.Time
-			curNextDue  *time.Time
-			curClosedBy *int64
+			curRecStart   *time.Time
+			curNextDue    *time.Time
+			curClosedBy   *int64
+			curAssignedTo *int64
 		)
 
 		err = tx.QueryRow(ctx,
 			`SELECT t.project_id, t.title, t.description, t.due_at, t.completed_at,
 			        t.repeat_every, t.repeat_unit,
-			        t.recurrence_start_at, t.next_due_at, t.closed_by
+			        t.recurrence_start_at, t.next_due_at, t.closed_by, t.assigned_to
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
 			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
@@ -581,7 +640,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 		).Scan(
 			&projectID, &curTitle, &curDesc, &curDueAt, &curCompletedAt,
 			&curRepeatEvery, &curRepeatUnit,
-			&curRecStart, &curNextDue, &curClosedBy,
+			&curRecStart, &curNextDue, &curClosedBy, &curAssignedTo,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "task not found")
@@ -644,6 +703,19 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			} else {
 				newCompletedAt = nil
 				newClosedBy = nil
+			}
+		}
+
+		// Assigned user change
+		var newAssignedTo = curAssignedTo
+		if clearAssignedTo {
+			newAssignedTo = nil
+		} else if req.AssignedTo != nil && *req.AssignedTo != "" {
+			var err error
+			newAssignedTo, err = resolveAssignedTo(ctx, db, user.WorkspaceID, *req.AssignedTo)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid assignee: "+err.Error())
+				return
 			}
 		}
 
@@ -737,8 +809,9 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			     recurrence_start_at=$7,
 			     next_due_at=$8,
 			     closed_by=$9,
+			     assigned_to=$10,
 			     updated_at=now()
-			 WHERE id=$10 AND workspace_id=$11 AND deleted_at IS NULL
+			 WHERE id=$11 AND workspace_id=$12 AND deleted_at IS NULL
 			 RETURNING next_due_at`,
 			newTitle,
 			newDesc,
@@ -749,6 +822,7 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 			newRecStart,
 			newNextDue,
 			newClosedBy,
+			newAssignedTo,
 			taskID,
 			user.WorkspaceID,
 		).Scan(&newNextDue)

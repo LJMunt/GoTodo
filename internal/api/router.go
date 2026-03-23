@@ -2,6 +2,7 @@ package api
 
 import (
 	"GoToDo/internal/api/agenda"
+	apimw "GoToDo/internal/api/middleware"
 	"GoToDo/internal/api/orgs"
 	"GoToDo/internal/api/projects"
 	"GoToDo/internal/api/tags"
@@ -83,6 +84,7 @@ func NewRouter(deps app.Deps) chi.Router {
 		// Everything in here requires a valid user token
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.RequireAuth(deps.DB))
+			r.Use(apimw.ResolveWorkspace(deps.DB))
 
 			r.Post("/auth/logout", auth.LogoutHandler(deps.DB))
 
