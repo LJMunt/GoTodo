@@ -99,7 +99,7 @@ components:
     OrgMember:
       type: object
       properties:
-        user_id:
+        public_id:
           type: string
           description: User public ID
         email:
@@ -111,7 +111,7 @@ components:
         joined_at:
           type: string
           format: date-time
-      required: [user_id, email, role, joined_at]
+      required: [public_id, email, role, joined_at]
 
     Project:
       type: object
@@ -1389,12 +1389,12 @@ paths:
             schema:
               type: object
               properties:
-                user_id:
+                public_id:
                   type: string
                 role:
                   type: string
                   enum: [admin, member]
-              required: [user_id]
+              required: [public_id]
       responses:
         "204":
           description: Added/updated
@@ -3370,6 +3370,219 @@ paths:
                 $ref: '#/components/schemas/Error'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs:
+    get:
+      tags: [Admin]
+      summary: List all organizations
+      parameters:
+        - name: include_deleted
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Organization'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Admin]
+      summary: Get organization details (admin)
+      responses:
+        "200":
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags: [Admin]
+      summary: Update organization (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        "204":
+          description: Updated
+        "400":
+          description: Invalid request
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [Admin]
+      summary: Permanent delete organization (admin)
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [Admin]
+      summary: Restore soft-deleted organization
+      responses:
+        "204":
+          description: Restored
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs/{id}/projects:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: include_deleted
+        in: query
+        schema:
+          type: boolean
+          default: false
+    get:
+      tags: [Admin]
+      summary: List organization projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs/{id}/tasks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: include_deleted
+        in: query
+        schema:
+          type: boolean
+          default: false
+    get:
+      tags: [Admin]
+      summary: List organization tasks
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/orgs/{id}/tags:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [Admin]
+      summary: List organization tags
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
         "500":

@@ -26,7 +26,7 @@ type OrganizationResponse struct {
 }
 
 type MemberResponse struct {
-	UserID   string    `json:"user_id"` // PublicID
+	PublicID string    `json:"public_id"`
 	Email    string    `json:"email"`
 	Role     string    `json:"role"`
 	JoinedAt time.Time `json:"joined_at"`
@@ -250,8 +250,8 @@ func DeleteOrganizationHandler(db orgDB) http.HandlerFunc {
 
 func AddMemberHandler(db orgDB) http.HandlerFunc {
 	type request struct {
-		UserID string `json:"user_id"` // PublicID
-		Role   string `json:"role"`
+		PublicID string `json:"public_id"`
+		Role     string `json:"role"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -266,8 +266,8 @@ func AddMemberHandler(db orgDB) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		if req.UserID == "" {
-			writeErr(w, http.StatusBadRequest, "user_id is required")
+		if req.PublicID == "" {
+			writeErr(w, http.StatusBadRequest, "public_id is required")
 			return
 		}
 		if req.Role == "" {
@@ -282,7 +282,7 @@ func AddMemberHandler(db orgDB) http.HandlerFunc {
 		defer cancel()
 
 		var internalUserID int64
-		err = db.QueryRow(ctx, `SELECT id FROM users WHERE public_id = $1`, req.UserID).Scan(&internalUserID)
+		err = db.QueryRow(ctx, `SELECT id FROM users WHERE public_id = $1`, req.PublicID).Scan(&internalUserID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "user not found")
 			return
@@ -316,7 +316,7 @@ func RemoveMemberHandler(db orgDB) http.HandlerFunc {
 
 		userPublicID := chi.URLParam(r, "userId")
 		if userPublicID == "" {
-			writeErr(w, http.StatusBadRequest, "user_id is required")
+			writeErr(w, http.StatusBadRequest, "public_id is required")
 			return
 		}
 
@@ -332,6 +332,23 @@ func RemoveMemberHandler(db orgDB) http.HandlerFunc {
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to find user")
 			return
+		}
+
+		// Harden: Check if user is the last admin
+		var role string
+		err = db.QueryRow(ctx, "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2", orgID, internalUserID).Scan(&role)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "member not found")
+			return
+		}
+
+		if role == "admin" {
+			var adminCount int
+			err = db.QueryRow(ctx, "SELECT count(*) FROM org_members WHERE org_id = $1 AND role = 'admin'", orgID).Scan(&adminCount)
+			if err == nil && adminCount <= 1 {
+				writeErr(w, http.StatusBadRequest, "cannot remove the last admin. promote another admin first or delete the organization.")
+				return
+			}
 		}
 
 		tag, err := db.Exec(ctx, `DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`, orgID, internalUserID)
@@ -456,7 +473,7 @@ func ListMembersHandler(db orgDB) http.HandlerFunc {
 		var members []MemberResponse
 		for rows.Next() {
 			var m MemberResponse
-			if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.JoinedAt); err != nil {
+			if err := rows.Scan(&m.PublicID, &m.Email, &m.Role, &m.JoinedAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, "failed to read members")
 				return
 			}

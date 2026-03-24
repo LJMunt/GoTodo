@@ -58,7 +58,9 @@ func Routes(r chi.Router, deps app.Deps) {
 	r.Route("/orgs", func(r chi.Router) {
 		r.Get("/", ListOrganizationsHandler(deps.DB))
 		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", GetOrganizationHandler(deps.DB))
 			r.Patch("/", UpdateOrganizationHandler(deps.DB))
+			r.Delete("/", PermanentDeleteOrganizationHandler(deps.DB))
 			r.Delete("/permanent", PermanentDeleteOrganizationHandler(deps.DB))
 			r.Post("/restore", RestoreOrganizationHandler(deps.DB))
 

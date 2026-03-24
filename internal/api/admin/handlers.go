@@ -1180,15 +1180,22 @@ func formatBytes(b int64) string {
 
 func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		rows, err := db.Query(ctx, `
+		query := `
 			SELECT o.id, o.name, w.public_id as workspace_id, o.deleted_at, o.created_at, o.updated_at
 			FROM orgs o
 			JOIN workspaces w ON w.org_id = o.id
-			ORDER BY o.id ASC
-		`)
+		`
+		if !includeDeleted {
+			query += " WHERE o.deleted_at IS NULL"
+		}
+		query += " ORDER BY o.id ASC"
+
+		rows, err := db.Query(ctx, query)
 		if err != nil {
 			writeErr(w, "failed to list organizations", http.StatusInternalServerError)
 			return
@@ -1210,6 +1217,38 @@ func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, orgs)
+	}
+}
+
+func GetOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			writeErr(w, "invalid organization id", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		var o OrganizationResponse
+		err = db.QueryRow(ctx, `
+			SELECT o.id, o.name, w.public_id as workspace_id, o.deleted_at, o.created_at, o.updated_at
+			FROM orgs o
+			JOIN workspaces w ON w.org_id = o.id
+			WHERE o.id = $1
+		`, id).Scan(&o.ID, &o.Name, &o.WorkspacePublicID, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt)
+
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeErr(w, "organization not found", http.StatusNotFound)
+				return
+			}
+			writeErr(w, "failed to fetch organization", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, o)
 	}
 }
 
