@@ -7,8 +7,8 @@ import (
 )
 
 func Routes(r chi.Router, deps app.Deps) {
-	r.Get("/me", MeHandler(deps.DB))
-	r.Patch("/me", UpdateMeHandler(deps.DB))
-	r.Delete("/me", DeleteMeHandler(deps.DB))
-	r.Get("/search", SearchUsersHandler(deps.DB))
+	r.Get("/me", MeHandler(deps))
+	r.Patch("/me", UpdateMeHandler(deps))
+	r.Delete("/me", DeleteMeHandler(deps))
+	r.Get("/search", SearchUsersHandler(deps))
 }

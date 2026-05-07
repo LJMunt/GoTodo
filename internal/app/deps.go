@@ -1,12 +1,18 @@
 package app
 
 import (
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/repository"
+	"GoToDo/internal/service"
 	"github.com/rs/zerolog"
 )
 
 type Deps struct {
-	DB     *pgxpool.Pool
-	Logger zerolog.Logger
-	Config Config
+	DB             repository.DBTX
+	Logger         zerolog.Logger
+	Config         Config
+	TaskService    service.TaskService
+	ProjectService service.ProjectService
+	TagService     service.TagService
+	UserService    service.UserService
+	OrgService     service.OrgService
 }

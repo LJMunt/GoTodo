@@ -13,7 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"GoToDo/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -497,7 +498,7 @@ func UnverifyUserEmailHandler(db userDB) http.HandlerFunc {
 	}
 }
 
-func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListUserProjectsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -545,7 +546,7 @@ func ListUserProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetProjectHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -588,7 +589,7 @@ func GetProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateProjectHandler(db repository.DBTX) http.HandlerFunc {
 	type request struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -641,7 +642,7 @@ func UpdateProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteProjectHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -657,7 +658,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
@@ -699,7 +700,7 @@ func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RestoreProjectHandler(db repository.DBTX) http.HandlerFunc {
 	type request struct {
 		RestoreTasks *bool `json:"restore_tasks"`
 	}
@@ -732,7 +733,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
@@ -776,7 +777,7 @@ func RestoreProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RestoreUserTaskHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -836,7 +837,7 @@ func RestoreUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListUserTasksHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -906,7 +907,7 @@ func ListUserTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListProjectTasksHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -994,7 +995,7 @@ func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteUserTaskHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -1029,7 +1030,7 @@ func DeleteUserTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListUserTagsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -1078,7 +1079,7 @@ func ListUserTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteUserTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteUserTagHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, err := parseInt64Param(r, "userId")
 		if err != nil || userID <= 0 {
@@ -1178,7 +1179,7 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.2f TB", float64(b)/float64(unit*unit*unit*unit))
 }
 
-func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
 
@@ -1220,7 +1221,7 @@ func ListOrganizationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func GetOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetOrganizationHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseInt64Param(r, "id")
 		if err != nil || id <= 0 {
@@ -1252,7 +1253,7 @@ func GetOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func UpdateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateOrganizationHandler(db repository.DBTX) http.HandlerFunc {
 	type request struct {
 		Name *string `json:"name"`
 	}
@@ -1295,7 +1296,7 @@ func UpdateOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RestoreOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RestoreOrganizationHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseInt64Param(r, "id")
 		if err != nil || id <= 0 {
@@ -1321,7 +1322,7 @@ func RestoreOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func PermanentDeleteOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
+func PermanentDeleteOrganizationHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := parseInt64Param(r, "id")
 		if err != nil || id <= 0 {
@@ -1347,7 +1348,7 @@ func PermanentDeleteOrganizationHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationProjectsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1394,7 +1395,7 @@ func ListOrganizationProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationTasksHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1462,7 +1463,7 @@ func ListOrganizationTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func GetOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetOrganizationProjectHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1504,7 +1505,7 @@ func GetOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func UpdateOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateOrganizationProjectHandler(db repository.DBTX) http.HandlerFunc {
 	type request struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -1557,7 +1558,7 @@ func UpdateOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteOrganizationProjectHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1573,7 +1574,7 @@ func DeleteOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
@@ -1615,7 +1616,7 @@ func DeleteOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RestoreOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RestoreOrganizationProjectHandler(db repository.DBTX) http.HandlerFunc {
 	type request struct {
 		RestoreTasks *bool `json:"restore_tasks"`
 	}
@@ -1647,7 +1648,7 @@ func RestoreOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, "failed to start transaction", http.StatusInternalServerError)
 			return
@@ -1691,7 +1692,7 @@ func RestoreOrganizationProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteOrganizationTaskHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1726,7 +1727,7 @@ func DeleteOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func RestoreOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RestoreOrganizationTaskHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1785,7 +1786,7 @@ func RestoreOrganizationTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationProjectTasksHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1869,7 +1870,7 @@ func ListOrganizationProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationTagsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1917,7 +1918,7 @@ func ListOrganizationTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func DeleteOrganizationTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteOrganizationTagHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {
@@ -1948,7 +1949,7 @@ func DeleteOrganizationTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func ListOrganizationMembersHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListOrganizationMembersHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, err := parseInt64Param(r, "id")
 		if err != nil || orgID <= 0 {

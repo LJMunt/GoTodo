@@ -1,19 +1,13 @@
 package tasks
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
+	"GoToDo/internal/api/apiutil"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type occurrenceResponse struct {
@@ -22,10 +16,6 @@ type occurrenceResponse struct {
 	OccurrenceIndex int64      `json:"occurrence_index"`
 	DueAt           time.Time  `json:"due_at"`
 	CompletedAt     *time.Time `json:"completed_at"`
-}
-
-func parseInt64URLParam(r *http.Request, key string) (int64, error) {
-	return strconv.ParseInt(chi.URLParam(r, key), 10, 64)
 }
 
 func parseTimeQuery(r *http.Request, key string) (*time.Time, error) {
@@ -40,28 +30,28 @@ func parseTimeQuery(r *http.Request, key string) (*time.Time, error) {
 	return &t, nil
 }
 
-func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListTaskOccurrencesHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseInt64URLParam(r, "taskId")
+		taskID, err := apiutil.ParseInt64Param(r, "taskId")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
 
 		fromQ, err := parseTimeQuery(r, "from")
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid from (use RFC3339)")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid from (use RFC3339)")
 			return
 		}
 		toQ, err := parseTimeQuery(r, "to")
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid to (use RFC3339)")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid to (use RFC3339)")
 			return
 		}
 
@@ -75,33 +65,13 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			to = toQ.UTC()
 		}
 		if !to.After(from) {
-			writeErr(w, http.StatusBadRequest, "to must be after from")
+			apiutil.WriteErr(w, http.StatusBadRequest, "to must be after from")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		// Only recurring tasks have occurrences.
-		isRec, err := RecurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
+		occ, err := deps.TaskService.ListTaskOccurrences(r.Context(), user.WorkspaceID, taskID, from, to)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify task")
-			return
-		}
-		if !isRec {
-			writeErr(w, http.StatusNotFound, "task not found")
-			return
-		}
-
-		// Lazy-generate up to `to` so the range query is complete.
-		if err := app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, to); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to generate occurrences")
-			return
-		}
-
-		occ, err := app.ListTaskOccurrences(ctx, db, user.WorkspaceID, taskID, from, to)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to list occurrences")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
@@ -116,13 +86,11 @@ func ListTaskOccurrencesHandler(db *pgxpool.Pool) http.HandlerFunc {
 			})
 		}
 
-		writeJSON(w, http.StatusOK, out)
+		apiutil.WriteJSON(w, http.StatusOK, out)
 	}
 }
 
-/* ---------------- PATCH /tasks/{taskId}/occurrences/{occurrenceId} ---------------- */
-
-func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateTaskOccurrenceHandler(deps app.Deps) http.HandlerFunc {
 	type reqBody struct {
 		Completed *bool `json:"completed"`
 	}
@@ -130,59 +98,38 @@ func UpdateTaskOccurrenceHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseInt64URLParam(r, "taskId")
+		taskID, err := apiutil.ParseInt64Param(r, "taskId")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
-		occID, err := parseInt64URLParam(r, "occurrenceId")
+		occID, err := apiutil.ParseInt64Param(r, "occurrenceId")
 		if err != nil || occID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid occurrence id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid occurrence id")
 			return
 		}
 
 		var req reqBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if req.Completed == nil {
-			writeErr(w, http.StatusBadRequest, "completed is required")
+			apiutil.WriteErr(w, http.StatusBadRequest, "completed is required")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		// Ensure this task is a visible recurring task.
-		isRec, err := RecurringTaskVisible(ctx, db, user.WorkspaceID, taskID)
+		updated, err := deps.TaskService.UpdateTaskOccurrence(r.Context(), user.WorkspaceID, taskID, occID, *req.Completed)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify task")
-			return
-		}
-		if !isRec {
-			writeErr(w, http.StatusNotFound, "task not found")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		updated, err := app.SetOccurrenceCompleted(ctx, db, user.WorkspaceID, taskID, occID, *req.Completed)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "occurrence not found")
-			return
-		}
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to update occurrence")
-			return
-		}
-
-		// Best-effort: keep next_due_at fresh without cron
-		_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, time.Now().UTC().AddDate(0, 0, 60))
-
-		writeJSON(w, http.StatusOK, occurrenceResponse{
+		apiutil.WriteJSON(w, http.StatusOK, occurrenceResponse{
 			ID:              updated.ID,
 			TaskID:          updated.TaskID,
 			OccurrenceIndex: updated.OccurrenceIndex,

@@ -6,26 +6,26 @@ import (
 )
 
 func Routes(r chi.Router, deps app.Deps) {
-	r.Use(OrganizationsEnabled(deps.DB))
+	r.Use(OrganizationsEnabled(deps))
 
-	r.Post("/", CreateOrganizationHandler(deps.DB))
-	r.Get("/", ListOrganizationsHandler(deps.DB))
+	r.Post("/", CreateOrganizationHandler(deps))
+	r.Get("/", ListOrganizationsHandler(deps))
 
 	r.Route("/{id}", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
-			r.Use(RequireOrgMember(deps.DB))
-			r.Get("/", GetOrganizationHandler(deps.DB))
-			r.Get("/members", ListMembersHandler(deps.DB))
-			r.Post("/leave", LeaveOrganizationHandler(deps.DB))
+			r.Use(RequireOrgMember(deps))
+			r.Get("/", GetOrganizationHandler(deps))
+			r.Get("/members", ListMembersHandler(deps))
+			r.Post("/leave", LeaveOrganizationHandler(deps))
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(RequireOrgAdmin(deps.DB))
-			r.Patch("/", UpdateOrganizationHandler(deps.DB))
-			r.Delete("/", DeleteOrganizationHandler(deps.DB))
+			r.Use(RequireOrgAdmin(deps))
+			r.Patch("/", UpdateOrganizationHandler(deps))
+			r.Delete("/", DeleteOrganizationHandler(deps))
 
-			r.Post("/members", AddMemberHandler(deps.DB))
-			r.Delete("/members/{userId}", RemoveMemberHandler(deps.DB))
+			r.Post("/members", AddMemberHandler(deps))
+			r.Delete("/members/{userId}", RemoveMemberHandler(deps))
 		})
 	})
 }

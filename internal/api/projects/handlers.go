@@ -1,58 +1,35 @@
 package projects
 
 import (
-	authmw "GoToDo/internal/auth"
-	"GoToDo/internal/logging"
-	"GoToDo/internal/models"
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/api/apiutil"
+	"GoToDo/internal/app"
+	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/models"
 )
-
-type apiError struct {
-	Error string `json:"error"`
-}
 
 type ProjectResponse struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
-	Description *string   `json:"description"`
+	Description *string   `json:"description,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-type projectQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+func mapProjectToResponse(p *models.Project) ProjectResponse {
+	return ProjectResponse{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+	}
 }
 
-type projectUpdater interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, apiError{Error: msg})
-}
-
-func parseID(r *http.Request) (int64, error) {
-	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-}
-
-func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
+func CreateProjectHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Name        string  `json:"name"`
 		Description *string `json:"description"`
@@ -61,123 +38,75 @@ func CreateProjectHandler(db projectQuerier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		if req.Name == "" {
-			writeErr(w, http.StatusBadRequest, "name is required")
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Str("name", req.Name).Msg("creating project")
-
-		var p ProjectResponse
-		err := db.QueryRow(ctx,
-			`INSERT INTO projects (workspace_id, name, description)
-			 VALUES ($1, $2, $3)
-			 RETURNING id, name, description, created_at, updated_at`,
-			user.WorkspaceID, req.Name, req.Description,
-		).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
-
+		p, err := deps.ProjectService.CreateProject(r.Context(), user.WorkspaceID, req.Name, req.Description)
 		if err != nil {
-			// Specific error for unique constraint violation
-			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "23505") {
-				l.Debug().Str("name", req.Name).Msg("project creation failed: name exists")
-				writeErr(w, http.StatusConflict, "project with this name already exists")
-				return
-			}
-			l.Error().Err(err).Msg("failed to create project")
-			writeErr(w, http.StatusInternalServerError, "failed to create project")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("project_id", p.ID).Msg("project created")
-		writeJSON(w, http.StatusCreated, p)
+		apiutil.WriteJSON(w, http.StatusCreated, mapProjectToResponse(p))
 	}
 }
 
-func ListProjectsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListProjectsHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
 
-		rows, err := db.Query(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE workspace_id=$1 AND deleted_at IS NULL ORDER BY id`, user.WorkspaceID)
+		includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+		projects, err := deps.ProjectService.ListProjects(r.Context(), user.WorkspaceID, includeDeleted)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to list projects")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
-		defer rows.Close()
 
-		projects := make([]ProjectResponse, 0, 16)
-		for rows.Next() {
-			var p ProjectResponse
-			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to scan project")
-				return
-			}
-			projects = append(projects, p)
+		resp := make([]ProjectResponse, 0, len(projects))
+		for _, p := range projects {
+			resp = append(resp, mapProjectToResponse(p))
 		}
-		writeJSON(w, http.StatusOK, projects)
-	}
 
+		apiutil.WriteJSON(w, http.StatusOK, resp)
+	}
 }
 
-func GetProjectHandler(db projectQuerier) http.HandlerFunc {
+func GetProjectHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		id, err := parseID(r)
+		id, err := apiutil.ParseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+
+		p, err := deps.ProjectService.GetProject(r.Context(), user.WorkspaceID, id)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid project id")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		var m models.Project
-		err = db.QueryRow(ctx,
-			`SELECT id, workspace_id, name, description, created_at, updated_at
-			 FROM projects
-			 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-			id, user.WorkspaceID,
-		).Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Description, &m.CreatedAt, &m.UpdatedAt)
-
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "project not found")
-			return
-		}
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to fetch project")
-			return
-		}
-
-		p := ProjectResponse{ID: m.ID, Name: m.Name, Description: m.Description, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
-		writeJSON(w, http.StatusOK, p)
+		apiutil.WriteJSON(w, http.StatusOK, mapProjectToResponse(p))
 	}
 }
 
-func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
+func UpdateProjectHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -186,116 +115,51 @@ func UpdateProjectHandler(db projectUpdater) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		id, err := parseID(r)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid project id")
+		id, err := apiutil.ParseInt64Param(r, "id")
+		if err != nil || id <= 0 {
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("project_id", id).Msg("updating project")
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		tag, err := db.Exec(ctx,
-			`UPDATE projects
-			 SET name = COALESCE($1, name),
-			     description = COALESCE($2, description),
-			     updated_at = now()
-			 WHERE id = $3 AND workspace_id = $4`,
-			req.Name, req.Description, id, user.WorkspaceID,
-		)
-
+		p, err := deps.ProjectService.UpdateProject(r.Context(), user.WorkspaceID, id, req.Name, req.Description)
 		if err != nil {
-			l.Error().Err(err).Int64("project_id", id).Msg("failed to update project")
-			writeErr(w, http.StatusInternalServerError, "failed to update project")
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			l.Debug().Int64("project_id", id).Msg("project not found for update")
-			writeErr(w, http.StatusNotFound, "project not found")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("project_id", id).Msg("project updated successfully")
-		w.WriteHeader(http.StatusNoContent)
+		apiutil.WriteJSON(w, http.StatusOK, mapProjectToResponse(p))
 	}
 }
 
-func DeleteProjectHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteProjectHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		id, err := parseID(r) // your existing helper
+		id, err := apiutil.ParseInt64Param(r, "id")
 		if err != nil || id <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid project id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("project_id", id).Msg("deleting project")
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
-			return
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		// 1) soft delete project (only if not already deleted)
-		tag, err := tx.Exec(ctx,
-			`UPDATE projects
-			 SET deleted_at = now(), updated_at = now()
-			 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-			id, user.WorkspaceID,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to delete project")
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			l.Debug().Int64("project_id", id).Msg("project not found for deletion")
-			writeErr(w, http.StatusNotFound, "project not found")
+		if err := deps.ProjectService.DeleteProject(r.Context(), user.WorkspaceID, id); err != nil {
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		// 2) soft delete tasks under project (only tasks not already deleted)
-		_, err = tx.Exec(ctx,
-			`UPDATE tasks
-			 SET deleted_at = now(), updated_at = now()
-			 WHERE project_id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
-			id, user.WorkspaceID,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to delete project tasks")
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			l.Error().Err(err).Int64("project_id", id).Msg("failed to commit project delete")
-			writeErr(w, http.StatusInternalServerError, "failed to commit project delete")
-			return
-		}
-
-		l.Info().Int64("project_id", id).Msg("project deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

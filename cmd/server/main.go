@@ -5,6 +5,8 @@ import (
 	"GoToDo/internal/app"
 	"GoToDo/internal/db"
 	"GoToDo/internal/logging"
+	"GoToDo/internal/repository"
+	"GoToDo/internal/service"
 	"context"
 	"net/http"
 	"os"
@@ -45,7 +47,32 @@ func main() {
 	// Start configuration sanity checker (checks every 1 minute)
 	logging.StartConfigWatcher(ctx, logger, pool, cfg.Logging.ConfigWatchInterval)
 
-	r := api.NewRouter(app.Deps{DB: pool, Logger: logger, Config: cfg})
+	// Repositories
+	taskRepo := repository.NewTaskRepository()
+	projectRepo := repository.NewProjectRepository()
+	userRepo := repository.NewUserRepository()
+	workspaceRepo := repository.NewWorkspaceRepository()
+	occurrenceRepo := repository.NewOccurrenceRepository()
+	tagRepo := repository.NewTagRepository()
+	orgRepo := repository.NewOrganizationRepository()
+
+	// Services
+	taskService := service.NewTaskService(pool, taskRepo, projectRepo, userRepo, workspaceRepo, occurrenceRepo, tagRepo)
+	projectService := service.NewProjectService(pool, projectRepo)
+	tagService := service.NewTagService(pool, tagRepo)
+	userService := service.NewUserService(pool, userRepo, workspaceRepo)
+	orgService := service.NewOrgService(pool, orgRepo, userRepo)
+
+	r := api.NewRouter(app.Deps{
+		DB:             pool,
+		Logger:         logger,
+		Config:         cfg,
+		TaskService:    taskService,
+		ProjectService: projectService,
+		TagService:     tagService,
+		UserService:    userService,
+		OrgService:     orgService,
+	})
 
 	addr := ":" + cfg.Port
 	srv := &http.Server{

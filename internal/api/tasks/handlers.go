@@ -1,164 +1,60 @@
 package tasks
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
+	"GoToDo/internal/api/apiutil"
 	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
-	"GoToDo/internal/logging"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/models"
+	"GoToDo/internal/service"
 )
 
 type TaskResponse struct {
-	ID                int64   `json:"id"`
-	WorkspacePublicID string  `json:"workspace_id"`
-	ProjectID         int64   `json:"project_id"`
-	Title             string  `json:"title"`
-	Description       *string `json:"description,omitempty"`
-
-	// DueAt semantics:
-	// - non-recurring: tasks.due_at
-	// - recurring: tasks.next_due_at (next occurrence)
-	DueAt       *time.Time `json:"due_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
-
-	RepeatEvery *int    `json:"repeat_every,omitempty"`
-	RepeatUnit  *string `json:"repeat_unit,omitempty"`
-
+	ID                int64      `json:"id"`
+	WorkspacePublicID string     `json:"workspace_id"`
+	ProjectID         int64      `json:"project_id"`
+	Title             string     `json:"title"`
+	Description       *string    `json:"description,omitempty"`
+	DueAt             *time.Time `json:"due_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
+	RepeatEvery       *int       `json:"repeat_every,omitempty"`
+	RepeatUnit        *string    `json:"repeat_unit,omitempty"`
 	RecurrenceStartAt *time.Time `json:"recurrence_start_at,omitempty"`
 	NextDueAt         *time.Time `json:"next_due_at,omitempty"`
-
-	CreatedBy  string  `json:"created_by"`
-	ClosedBy   *string `json:"closed_by,omitempty"`
-	AssignedTo *string `json:"assigned_to,omitempty"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedBy         string     `json:"created_by"`
+	ClosedBy          *string    `json:"closed_by,omitempty"`
+	AssignedTo        *string    `json:"assigned_to,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
-type apiError struct {
-	Error string `json:"error"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, apiError{Error: msg})
-}
-
-func parseInt64Param(r *http.Request, key string) (int64, error) {
-	s := chi.URLParam(r, key)
-	return strconv.ParseInt(s, 10, 64)
-}
-
-func isRecurring(repeatEvery *int, repeatUnit *string) bool {
-	return repeatEvery != nil && repeatUnit != nil
-}
-
-// For recurring tasks, we lazily generate occurrences up to this horizon
-// to keep next_due_at accurate for UI.
-func defaultHorizon() time.Time {
-	return time.Now().UTC().AddDate(0, 0, 60)
-}
-
-// TaskVisible ensures:
-// - task belongs to workspace
-// - task not deleted
-// - project not deleted
-func TaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
-	var ok bool
-	err := db.QueryRow(ctx,
-		`SELECT EXISTS(
-		   SELECT 1
-		   FROM tasks t
-		   JOIN projects p ON p.id = t.project_id
-		   WHERE t.id = $1
-		     AND t.workspace_id = $2
-		     AND t.deleted_at IS NULL
-		     AND p.deleted_at IS NULL
-		 )`,
-		taskID, workspaceID,
-	).Scan(&ok)
-	return ok, err
-}
-
-// RecurringTaskVisible ensures:
-// - TaskVisible condition
-// - and task is recurring (repeat_* set)
-func RecurringTaskVisible(ctx context.Context, db *pgxpool.Pool, workspaceID, taskID int64) (bool, error) {
-	var ok bool
-	err := db.QueryRow(ctx,
-		`SELECT EXISTS(
-		   SELECT 1
-		   FROM tasks t
-		   JOIN projects p ON p.id = t.project_id
-		   WHERE t.id = $1
-		     AND t.workspace_id = $2
-		     AND t.deleted_at IS NULL
-		     AND p.deleted_at IS NULL
-		     AND t.repeat_every IS NOT NULL
-		     AND t.repeat_unit IS NOT NULL
-		 )`,
-		taskID, workspaceID,
-	).Scan(&ok)
-	return ok, err
-}
-
-func resolveAssignedTo(ctx context.Context, db *pgxpool.Pool, workspaceID int64, publicID string) (*int64, error) {
-	// 1. Resolve publicID to internal user ID
-	var userID int64
-	err := db.QueryRow(ctx, "SELECT id FROM users WHERE public_id = $1 AND is_active = true", publicID).Scan(&userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("user not found or inactive")
-		}
-		return nil, err
+func mapTaskToResponse(t *models.Task, workspacePublicID string) TaskResponse {
+	return TaskResponse{
+		ID:                t.ID,
+		WorkspacePublicID: workspacePublicID,
+		ProjectID:         t.ProjectID,
+		Title:             t.Title,
+		Description:       t.Description,
+		DueAt:             t.DueAt,
+		CompletedAt:       t.CompletedAt,
+		DeletedAt:         t.DeletedAt,
+		RepeatEvery:       t.RepeatEvery,
+		RepeatUnit:        t.RepeatUnit,
+		RecurrenceStartAt: t.RecurrenceStartAt,
+		NextDueAt:         t.NextDueAt,
+		CreatedBy:         t.CreatedByPublicID,
+		ClosedBy:          t.ClosedByPublicID,
+		AssignedTo:        t.AssignedToPublicID,
+		CreatedAt:         t.CreatedAt,
+		UpdatedAt:         t.UpdatedAt,
 	}
-
-	// 2. Resolve workspace info to check membership
-	var wsType string
-	var wsUserID *int64
-	var wsOrgID *int64
-	err = db.QueryRow(ctx, "SELECT type, user_id, org_id FROM workspaces WHERE id = $1", workspaceID).Scan(&wsType, &wsUserID, &wsOrgID)
-	if err != nil {
-		return nil, err
-	}
-
-	if wsType == "user" {
-		if wsUserID != nil && *wsUserID == userID {
-			return &userID, nil
-		}
-		return nil, errors.New("user is not the owner of this personal workspace")
-	} else if wsType == "org" {
-		// Check if user is a member of the organization
-		var isMember bool
-		err = db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)", *wsOrgID, userID).Scan(&isMember)
-		if err != nil {
-			return nil, err
-		}
-		if isMember {
-			return &userID, nil
-		}
-		return nil, errors.New("user is not a member of this organization")
-	}
-
-	return nil, errors.New("invalid workspace type")
 }
 
-func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func CreateTaskHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Title       string     `json:"title"`
 		Description *string    `json:"description"`
@@ -171,380 +67,102 @@ func CreateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		l := logging.From(r.Context())
-
-		projectID, err := parseInt64Param(r, "projectId")
+		projectID, err := apiutil.ParseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid project id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-		if req.Title == "" {
-			writeErr(w, http.StatusBadRequest, "title is required")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		l.Info().
-			Int64("user_id", user.ID).
-			Int64("project_id", projectID).
-			Str("title", req.Title).
-			Bool("recurring", isRecurring(req.RepeatEvery, req.RepeatUnit)).
-			Msg("creating task")
+		task, err := deps.TaskService.CreateTask(r.Context(), service.CreateTaskParams{
+			WorkspaceID: user.WorkspaceID,
+			CreatorID:   user.ID,
+			ProjectID:   projectID,
+			Title:       req.Title,
+			Description: req.Description,
+			DueAt:       req.DueAt,
+			RepeatEvery: req.RepeatEvery,
+			RepeatUnit:  req.RepeatUnit,
+			AssignedTo:  req.AssignedTo,
+		})
 
-		// recurrence validation
-		if (req.RepeatEvery == nil) != (req.RepeatUnit == nil) {
-			writeErr(w, http.StatusBadRequest, "repeat_every and repeat_unit must be set together")
-			return
-		}
-		if req.RepeatEvery != nil && *req.RepeatEvery <= 0 {
-			writeErr(w, http.StatusBadRequest, "repeat_every must be > 0")
-			return
-		}
-
-		recurring := isRecurring(req.RepeatEvery, req.RepeatUnit)
-		if recurring && req.DueAt == nil {
-			// For recurring tasks, the first due date anchors the series.
-			writeErr(w, http.StatusBadRequest, "due_at is required for recurring tasks")
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		defer cancel()
-
-		var assignedToID *int64
-		if req.AssignedTo != nil && *req.AssignedTo != "" {
-			var err error
-			assignedToID, err = resolveAssignedTo(ctx, db, user.WorkspaceID, *req.AssignedTo)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid assignee: "+err.Error())
-				return
-			}
-		}
-
-		// Ensure project exists, belongs to workspace, and is not deleted
-		var projectOK bool
-		if err := db.QueryRow(ctx,
-			`SELECT EXISTS(
-			   SELECT 1 FROM projects
-			   WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL
-			 )`,
-			projectID, user.WorkspaceID,
-		).Scan(&projectOK); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify project")
-			return
-		}
-		if !projectOK {
-			writeErr(w, http.StatusNotFound, "project not found")
-			return
-		}
-
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
-			return
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		// Insert task (template or normal)
-		var t TaskResponse
-
-		var dueAtForTasks *time.Time
-		var recurrenceStartAt *time.Time
-		var nextDueAt *time.Time
-
-		if recurring {
-			ra := req.DueAt.UTC()
-			recurrenceStartAt = &ra
-			nextDueAt = &ra
-			dueAtForTasks = nil // templates do not use tasks.due_at for recurrence
-		} else {
-			if req.DueAt != nil {
-				d := req.DueAt.UTC()
-				dueAtForTasks = &d
-			}
-		}
-
-		var wsID int64
-		err = tx.QueryRow(ctx,
-			`INSERT INTO tasks (workspace_id, project_id, title, description, due_at, repeat_every, repeat_unit, recurrence_start_at, next_due_at, created_by, assigned_to)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10, $11)
-			 RETURNING id, workspace_id, project_id, title, description,
-			           due_at, completed_at, deleted_at,
-			           repeat_every, repeat_unit,
-			           recurrence_start_at, next_due_at,
-			           created_at, updated_at`,
-			user.WorkspaceID, projectID, req.Title, req.Description,
-			dueAtForTasks, req.RepeatEvery, req.RepeatUnit,
-			recurrenceStartAt, nextDueAt, user.ID, assignedToID,
-		).Scan(
-			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
-			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
-			&t.RepeatEvery, &t.RepeatUnit,
-			&t.RecurrenceStartAt, &t.NextDueAt,
-			&t.CreatedAt, &t.UpdatedAt,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to create task")
-			return
-		}
-		t.WorkspacePublicID = user.WorkspacePublicID
-		t.CreatedBy = user.PublicID
-		t.AssignedTo = req.AssignedTo
-
-		// If recurring, ensure the first occurrence exists (history basis)
-		if recurring {
-			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
-				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
-				 ON CONFLICT (task_id, due_at) DO NOTHING`,
-				user.WorkspaceID, t.ID, t.RecurrenceStartAt.UTC(),
-			)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to create initial occurrence")
-				return
-			}
-
-			// Generate ahead a bit and update next_due_at cache
-			if err := app.EnsureOccurrencesUpTo(ctx, tx, user.WorkspaceID, t.ID, defaultHorizon()); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to initialize occurrences")
-				return
-			}
-
-			// Refresh next_due_at for response
-			_ = tx.QueryRow(ctx,
-				`SELECT next_due_at FROM tasks WHERE id=$1 AND workspace_id=$2`,
-				t.ID, user.WorkspaceID,
-			).Scan(&t.NextDueAt)
-
-			// For response, DueAt should represent "next due"
-			t.DueAt = t.NextDueAt
-			t.CompletedAt = nil
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			l.Error().Err(err).Msg("failed to commit task creation")
-			writeErr(w, http.StatusInternalServerError, "failed to commit task")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("task_id", t.ID).Msg("task created")
-		writeJSON(w, http.StatusCreated, t)
+		apiutil.WriteJSON(w, http.StatusCreated, mapTaskToResponse(task, user.WorkspacePublicID))
 	}
 }
 
-func ListProjectTasksHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListProjectTasksHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		projectID, err := parseInt64Param(r, "projectId")
+		projectID, err := apiutil.ParseInt64Param(r, "projectId")
 		if err != nil || projectID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid project id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid project id")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		// Project must exist and not be deleted
-		var projectOK bool
-		if err := db.QueryRow(ctx,
-			`SELECT EXISTS(
-			   SELECT 1 FROM projects
-			   WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL
-			 )`,
-			projectID, user.WorkspaceID,
-		).Scan(&projectOK); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify project")
-			return
-		}
-		if !projectOK {
-			writeErr(w, http.StatusNotFound, "project not found")
-			return
-		}
-
-		rows, err := db.Query(ctx,
-			`SELECT t.id, t.workspace_id, t.project_id, t.title, t.description,
-			        t.due_at, t.completed_at, t.deleted_at,
-			        t.repeat_every, t.repeat_unit,
-			        t.recurrence_start_at, t.next_due_at,
-			        t.created_at, t.updated_at,
-			        uc.public_id as created_by,
-			        ucl.public_id as closed_by,
-			        ua.public_id as assigned_to
-			 FROM tasks t
-			 LEFT JOIN users uc ON uc.id = t.created_by
-			 LEFT JOIN users ucl ON ucl.id = t.closed_by
-			 LEFT JOIN users ua ON ua.id = t.assigned_to
-			 WHERE t.workspace_id=$1 AND t.project_id=$2 AND t.deleted_at IS NULL
-			 ORDER BY t.id`,
-			user.WorkspaceID, projectID,
-		)
+		tasks, err := deps.TaskService.ListProjectTasks(r.Context(), user.WorkspaceID, projectID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to list tasks")
-			return
-		}
-		defer rows.Close()
-
-		out := make([]TaskResponse, 0, 64)
-		recurringTaskIDs := make([]int64, 0, 16)
-
-		for rows.Next() {
-			var t TaskResponse
-			var wsID int64
-			if err := rows.Scan(
-				&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
-				&t.DueAt, &t.CompletedAt, &t.DeletedAt,
-				&t.RepeatEvery, &t.RepeatUnit,
-				&t.RecurrenceStartAt, &t.NextDueAt,
-				&t.CreatedAt, &t.UpdatedAt,
-				&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
-			); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to read tasks")
-				return
-			}
-			t.WorkspacePublicID = user.WorkspacePublicID
-
-			if isRecurring(t.RepeatEvery, t.RepeatUnit) {
-				recurringTaskIDs = append(recurringTaskIDs, t.ID)
-				t.DueAt = t.NextDueAt
-				t.CompletedAt = nil
-			}
-			out = append(out, t)
-		}
-		if err := rows.Err(); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to read tasks")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		// Lazy generation to keep next_due_at up to date.
-		h := defaultHorizon()
-		for _, taskID := range recurringTaskIDs {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, h) // best-effort
+		resp := make([]TaskResponse, 0, len(tasks))
+		for _, t := range tasks {
+			resp = append(resp, mapTaskToResponse(t, user.WorkspacePublicID))
 		}
 
-		if len(recurringTaskIDs) > 0 {
-			rows2, err := db.Query(ctx,
-				`SELECT id, next_due_at
-				 FROM tasks
-				 WHERE workspace_id=$1 AND id = ANY($2)`,
-				user.WorkspaceID, recurringTaskIDs,
-			)
-			if err == nil {
-				defer rows2.Close()
-				nextMap := map[int64]*time.Time{}
-				for rows2.Next() {
-					var id int64
-					var nd *time.Time
-					_ = rows2.Scan(&id, &nd)
-					if nd != nil {
-						t := nd.UTC()
-						nextMap[id] = &t
-					} else {
-						nextMap[id] = nil
-					}
-				}
-				for i := range out {
-					if isRecurring(out[i].RepeatEvery, out[i].RepeatUnit) {
-						out[i].NextDueAt = nextMap[out[i].ID]
-						out[i].DueAt = out[i].NextDueAt
-					}
-				}
-			}
-		}
-
-		writeJSON(w, http.StatusOK, out)
+		apiutil.WriteJSON(w, http.StatusOK, resp)
 	}
 }
 
-func GetTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetTaskHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseInt64Param(r, "id")
+		taskID, err := apiutil.ParseInt64Param(r, "id")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		defer cancel()
-
-		var t TaskResponse
-		var wsID int64
-		err = db.QueryRow(ctx,
-			`SELECT t.id, t.workspace_id, t.project_id, t.title, t.description,
-			        t.due_at, t.completed_at, t.deleted_at,
-			        t.repeat_every, t.repeat_unit,
-			        t.recurrence_start_at, t.next_due_at,
-			        t.created_at, t.updated_at,
-			        uc.public_id as created_by,
-			        ucl.public_id as closed_by,
-			        ua.public_id as assigned_to
-			 FROM tasks t
-			 JOIN projects p ON p.id = t.project_id
-			 LEFT JOIN users uc ON uc.id = t.created_by
-			 LEFT JOIN users ucl ON ucl.id = t.closed_by
-			 LEFT JOIN users ua ON ua.id = t.assigned_to
-			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
-			taskID, user.WorkspaceID,
-		).Scan(
-			&t.ID, &wsID, &t.ProjectID, &t.Title, &t.Description,
-			&t.DueAt, &t.CompletedAt, &t.DeletedAt,
-			&t.RepeatEvery, &t.RepeatUnit,
-			&t.RecurrenceStartAt, &t.NextDueAt,
-			&t.CreatedAt, &t.UpdatedAt,
-			&t.CreatedBy, &t.ClosedBy, &t.AssignedTo,
-		)
-
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "task not found")
-			return
-		}
+		task, err := deps.TaskService.GetTask(r.Context(), user.WorkspaceID, taskID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
-		t.WorkspacePublicID = user.WorkspacePublicID
 
-		if isRecurring(t.RepeatEvery, t.RepeatUnit) {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, t.ID, defaultHorizon()) // best-effort
-
-			_ = db.QueryRow(ctx,
-				`SELECT next_due_at FROM tasks WHERE id=$1 AND workspace_id=$2`,
-				t.ID, user.WorkspaceID,
-			).Scan(&t.NextDueAt)
-
-			t.DueAt = t.NextDueAt
-			t.CompletedAt = nil
-		}
-
-		writeJSON(w, http.StatusOK, t)
+		apiutil.WriteJSON(w, http.StatusOK, mapTaskToResponse(task, user.WorkspacePublicID))
 	}
 }
 
-func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateTaskHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Title       *string `json:"title"`
 		Description *string `json:"description"`
 
-		DueAt      *time.Time `json:"due_at"` // set
+		DueAt      *time.Time `json:"due_at"`
 		ClearDueAt *bool      `json:"clear_due_at"`
 
 		Completed *bool `json:"completed"`
@@ -560,330 +178,69 @@ func UpdateTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseInt64Param(r, "id")
+		taskID, err := apiutil.ParseInt64Param(r, "id")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("updating task")
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		if req.Title != nil && *req.Title == "" {
-			writeErr(w, http.StatusBadRequest, "title cannot be empty")
-			return
+		var closedBy *int64
+		if req.Completed != nil && *req.Completed {
+			closedBy = &user.ID
 		}
 
-		// Recurrence rules:
-		// - if clear_repeat=true => set both to NULL
-		// - else: repeat_every and repeat_unit must be set together (or both nil = no change)
-		clearRepeat := req.ClearRepeat != nil && *req.ClearRepeat
-		if clearRepeat {
-			req.RepeatEvery = nil
-			req.RepeatUnit = nil
-		} else if (req.RepeatEvery == nil) != (req.RepeatUnit == nil) {
-			writeErr(w, http.StatusBadRequest, "repeat_every and repeat_unit must be set together")
-			return
-		} else if req.RepeatEvery != nil && *req.RepeatEvery <= 0 {
-			writeErr(w, http.StatusBadRequest, "repeat_every must be > 0")
-			return
-		}
+		task, err := deps.TaskService.UpdateTask(r.Context(), user.WorkspaceID, taskID, service.UpdateTaskParams{
+			Title:           req.Title,
+			Description:     req.Description,
+			DueAt:           req.DueAt,
+			ClearDueAt:      req.ClearDueAt != nil && *req.ClearDueAt,
+			Completed:       req.Completed,
+			RepeatEvery:     req.RepeatEvery,
+			RepeatUnit:      req.RepeatUnit,
+			ClearRepeat:     req.ClearRepeat != nil && *req.ClearRepeat,
+			AssignedTo:      req.AssignedTo,
+			ClearAssignedTo: req.ClearAssignedTo != nil && *req.ClearAssignedTo,
+			ClosedBy:        closedBy,
+		})
 
-		clearDue := req.ClearDueAt != nil && *req.ClearDueAt
-		clearAssignedTo := req.ClearAssignedTo != nil && *req.ClearAssignedTo
-
-		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-		defer cancel()
-
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
-			return
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		var (
-			projectID int64
-
-			curTitle       string
-			curDesc        *string
-			curDueAt       *time.Time
-			curCompletedAt *time.Time
-
-			curRepeatEvery *int
-			curRepeatUnit  *string
-
-			curRecStart   *time.Time
-			curNextDue    *time.Time
-			curClosedBy   *int64
-			curAssignedTo *int64
-		)
-
-		err = tx.QueryRow(ctx,
-			`SELECT t.project_id, t.title, t.description, t.due_at, t.completed_at,
-			        t.repeat_every, t.repeat_unit,
-			        t.recurrence_start_at, t.next_due_at, t.closed_by, t.assigned_to
-			 FROM tasks t
-			 JOIN projects p ON p.id = t.project_id
-			 WHERE t.id=$1 AND t.workspace_id=$2 AND t.deleted_at IS NULL AND p.deleted_at IS NULL`,
-			taskID, user.WorkspaceID,
-		).Scan(
-			&projectID, &curTitle, &curDesc, &curDueAt, &curCompletedAt,
-			&curRepeatEvery, &curRepeatUnit,
-			&curRecStart, &curNextDue, &curClosedBy, &curAssignedTo,
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "task not found")
-			return
-		}
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to fetch task")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		wasRecurring := isRecurring(curRepeatEvery, curRepeatUnit)
-
-		// Compute what recurrence will be after update
-		newRepeatEvery := curRepeatEvery
-		newRepeatUnit := curRepeatUnit
-
-		if clearRepeat {
-			newRepeatEvery = nil
-			newRepeatUnit = nil
-		} else if req.RepeatEvery != nil && req.RepeatUnit != nil {
-			// set recurrence
-			newRepeatEvery = req.RepeatEvery
-			newRepeatUnit = req.RepeatUnit
-		}
-		willBeRecurring := isRecurring(newRepeatEvery, newRepeatUnit)
-
-		// Completion on recurring templates is not allowed.
-		if req.Completed != nil && (wasRecurring || willBeRecurring) {
-			writeErr(w, http.StatusBadRequest, "cannot complete a recurring task template; complete an occurrence instead")
-			return
-		}
-
-		// Apply title/description updates
-		newTitle := curTitle
-		if req.Title != nil {
-			newTitle = *req.Title
-		}
-		newDesc := curDesc
-		if req.Description != nil {
-			newDesc = req.Description
-		}
-
-		// Apply due changes depending on type
-		var newDueAt = curDueAt
-		if clearDue {
-			newDueAt = nil
-		} else if req.DueAt != nil {
-			d := req.DueAt.UTC()
-			newDueAt = &d
-		}
-
-		// Completion timestamp for non-recurring tasks only
-		var newCompletedAt = curCompletedAt
-		var newClosedBy = curClosedBy
-		if req.Completed != nil {
-			if *req.Completed {
-				now := time.Now().UTC()
-				newCompletedAt = &now
-				newClosedBy = &user.ID
-			} else {
-				newCompletedAt = nil
-				newClosedBy = nil
-			}
-		}
-
-		// Assigned user change
-		var newAssignedTo = curAssignedTo
-		if clearAssignedTo {
-			newAssignedTo = nil
-		} else if req.AssignedTo != nil && *req.AssignedTo != "" {
-			var err error
-			newAssignedTo, err = resolveAssignedTo(ctx, db, user.WorkspaceID, *req.AssignedTo)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid assignee: "+err.Error())
-				return
-			}
-		}
-
-		var newRecStart = curRecStart
-		var newNextDue = curNextDue
-		var storedTasksDueAt *time.Time // what goes into tasks.due_at column
-
-		switch {
-		case !wasRecurring && !willBeRecurring:
-			// Normal -> Normal
-			storedTasksDueAt = newDueAt
-
-		case wasRecurring && willBeRecurring:
-			// Recurring -> Recurring
-			if req.DueAt != nil {
-				d := req.DueAt.UTC()
-				newRecStart = &d
-				_, err := tx.Exec(ctx,
-					`DELETE FROM task_occurrences
-					 WHERE workspace_id=$1 AND task_id=$2 AND completed_at IS NULL AND due_at >= $3`,
-					user.WorkspaceID, taskID, d,
-				)
-				if err != nil {
-					writeErr(w, http.StatusInternalServerError, "failed to reset future occurrences")
-					return
-				}
-			}
-			// Templates do not store tasks.due_at
-			storedTasksDueAt = nil
-			newCompletedAt = nil
-
-		case !wasRecurring && willBeRecurring:
-			// Normal -> Recurring
-			anchor := newDueAt
-			if anchor == nil {
-				writeErr(w, http.StatusBadRequest, "due_at is required to enable recurrence")
-				return
-			}
-			a := anchor.UTC()
-			newRecStart = &a
-			storedTasksDueAt = nil
-			newCompletedAt = nil
-
-			// Ensure anchor occurrence exists
-			_, err := tx.Exec(ctx,
-				`INSERT INTO task_occurrences (workspace_id, task_id, due_at, occurrence_index)
-				 VALUES ($1,$2,$3, (SELECT COALESCE(MAX(occurrence_index), 0) + 1 FROM task_occurrences WHERE task_id = $2))
-				 ON CONFLICT (task_id, due_at) DO NOTHING`,
-				user.WorkspaceID, taskID, a,
-			)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to create initial occurrence")
-				return
-			}
-
-		case wasRecurring && !willBeRecurring:
-			// Recurring -> Normal
-			// Pick a concrete due_at:
-			// - if user set due_at explicitly, use it
-			// - else prefer next_due_at
-			// - else recurrence_start_at
-			// - else keep existing tasks.due_at (unlikely for recurring)
-			var chosen *time.Time
-			if req.DueAt != nil {
-				d := req.DueAt.UTC()
-				chosen = &d
-			} else if curNextDue != nil {
-				d := curNextDue.UTC()
-				chosen = &d
-			} else if curRecStart != nil {
-				d := curRecStart.UTC()
-				chosen = &d
-			} else {
-				chosen = newDueAt
-			}
-			storedTasksDueAt = chosen
-			newRecStart = nil
-			newNextDue = nil
-			// keep completion changes for normal tasks
-		}
-
-		// Persist task changes atomically
-		err = tx.QueryRow(ctx,
-			`UPDATE tasks
-			 SET title=$1,
-			     description=$2,
-			     due_at=$3,
-			     completed_at=$4,
-			     repeat_every=$5,
-			     repeat_unit=$6,
-			     recurrence_start_at=$7,
-			     next_due_at=$8,
-			     closed_by=$9,
-			     assigned_to=$10,
-			     updated_at=now()
-			 WHERE id=$11 AND workspace_id=$12 AND deleted_at IS NULL
-			 RETURNING next_due_at`,
-			newTitle,
-			newDesc,
-			storedTasksDueAt,
-			newCompletedAt,
-			newRepeatEvery,
-			newRepeatUnit,
-			newRecStart,
-			newNextDue,
-			newClosedBy,
-			newAssignedTo,
-			taskID,
-			user.WorkspaceID,
-		).Scan(&newNextDue)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to update task")
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to commit task update")
-			writeErr(w, http.StatusInternalServerError, "failed to commit task update")
-			return
-		}
-
-		// If it's recurring after update, generate occurrences and refresh next_due_at cache.
-		if willBeRecurring {
-			_ = app.EnsureOccurrencesUpTo(ctx, db, user.WorkspaceID, taskID, defaultHorizon())
-		}
-
-		l.Info().Int64("task_id", taskID).Msg("task updated successfully")
-		w.WriteHeader(http.StatusNoContent)
+		apiutil.WriteJSON(w, http.StatusOK, mapTaskToResponse(task, user.WorkspacePublicID))
 	}
 }
 
-func DeleteTaskHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteTaskHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseInt64Param(r, "id")
+		taskID, err := apiutil.ParseInt64Param(r, "id")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("task_id", taskID).Msg("deleting task")
-
-		tag, err := db.Exec(ctx,
-			`UPDATE tasks SET deleted_at=now(), updated_at=now()
-			 WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`,
-			taskID, user.WorkspaceID,
-		)
-		if err != nil {
-			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to delete task")
-			writeErr(w, http.StatusInternalServerError, "failed to delete task")
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			l.Debug().Int64("task_id", taskID).Msg("task not found for deletion")
-			writeErr(w, http.StatusNotFound, "task not found")
+		if err := deps.TaskService.DeleteTask(r.Context(), user.WorkspaceID, taskID); err != nil {
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("task_id", taskID).Msg("task deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

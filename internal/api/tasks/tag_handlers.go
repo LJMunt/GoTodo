@@ -1,16 +1,13 @@
 package tasks
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
+	"GoToDo/internal/api/apiutil"
+	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
-	"GoToDo/internal/logging"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/models"
 )
 
 type TaskTagResponse struct {
@@ -19,71 +16,44 @@ type TaskTagResponse struct {
 	Color string `json:"color"`
 }
 
-func parseTaskID(r *http.Request) (int64, error) {
-	// route param name is {taskId}
-	return parseInt64Param(r, "taskId")
-}
-
-func GetTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := authmw.FromContext(r.Context())
-		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-
-		taskID, err := parseTaskID(r)
-		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		ok, err = TaskVisible(ctx, db, user.WorkspaceID, taskID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify task")
-			return
-		}
-		if !ok {
-			writeErr(w, http.StatusNotFound, "task not found")
-			return
-		}
-
-		rows, err := db.Query(ctx,
-			`SELECT tg.id, tg.name, tg.color
-									 FROM task_tags tt
-									 JOIN tags tg ON tg.id = tt.tag_id
-									 WHERE tt.workspace_id = $1 AND tt.task_id = $2
-									 ORDER BY tg.name , tg.id `,
-			user.WorkspaceID, taskID,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to list task tags")
-			return
-		}
-		defer rows.Close()
-
-		out := make([]TaskTagResponse, 0, 16)
-		for rows.Next() {
-			var t TaskTagResponse
-			if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to read task tags")
-				return
-			}
-			out = append(out, t)
-		}
-		if err := rows.Err(); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to read task tags")
-			return
-		}
-
-		writeJSON(w, http.StatusOK, out)
+func mapTagToResponse(t *models.Tag) TaskTagResponse {
+	return TaskTagResponse{
+		ID:    t.ID,
+		Name:  t.Name,
+		Color: t.Color,
 	}
 }
 
-func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func GetTaskTagsHandler(deps app.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := authmw.FromContext(r.Context())
+		if !ok {
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		taskID, err := apiutil.ParseInt64Param(r, "taskId")
+		if err != nil || taskID <= 0 {
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
+			return
+		}
+
+		tags, err := deps.TaskService.GetTaskTags(r.Context(), user.WorkspaceID, taskID)
+		if err != nil {
+			apiutil.HandleServiceErr(w, err)
+			return
+		}
+
+		out := make([]TaskTagResponse, 0, len(tags))
+		for _, t := range tags {
+			out = append(out, mapTagToResponse(t))
+		}
+
+		apiutil.WriteJSON(w, http.StatusOK, out)
+	}
+}
+
+func PutTaskTagsHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		TagIDs []int64 `json:"tag_ids"`
 	}
@@ -91,23 +61,23 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		taskID, err := parseTaskID(r)
+		taskID, err := apiutil.ParseInt64Param(r, "taskId")
 		if err != nil || taskID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid task id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid task id")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if req.TagIDs == nil {
-			writeErr(w, http.StatusBadRequest, "tag_ids is required")
+			apiutil.WriteErr(w, http.StatusBadRequest, "tag_ids is required")
 			return
 		}
 
@@ -116,7 +86,7 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		tagIDs := make([]int64, 0, len(req.TagIDs))
 		for _, id := range req.TagIDs {
 			if id <= 0 {
-				writeErr(w, http.StatusBadRequest, "tag_ids must be positive integers")
+				apiutil.WriteErr(w, http.StatusBadRequest, "tag_ids must be positive integers")
 				return
 			}
 			if _, exists := seen[id]; exists {
@@ -126,104 +96,17 @@ func PutTaskTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
 			tagIDs = append(tagIDs, id)
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("task_id", taskID).Ints64("tag_ids", tagIDs).Msg("updating task tags")
-
-		ok, err = TaskVisible(ctx, db, user.WorkspaceID, taskID)
+		tags, err := deps.TaskService.UpdateTaskTags(r.Context(), user.WorkspaceID, taskID, tagIDs)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to verify task")
-			return
-		}
-		if !ok {
-			writeErr(w, http.StatusNotFound, "task not found")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
-			return
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		// Validate that all tag IDs exist and belong to this workspace
-		if len(tagIDs) > 0 {
-			var count int
-			err = tx.QueryRow(ctx,
-				`SELECT COUNT(*) FROM tags WHERE workspace_id=$1 AND id = ANY($2::bigint[])`,
-				user.WorkspaceID, tagIDs,
-			).Scan(&count)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to validate tags")
-				return
-			}
-			if count != len(tagIDs) {
-				writeErr(w, http.StatusBadRequest, "one or more tag_ids are invalid")
-				return
-			}
+		out := make([]TaskTagResponse, 0, len(tags))
+		for _, t := range tags {
+			out = append(out, mapTagToResponse(t))
 		}
 
-		// Replace-all:
-		_, err = tx.Exec(ctx,
-			`DELETE FROM task_tags WHERE workspace_id=$1 AND task_id=$2`,
-			user.WorkspaceID, taskID,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to update task tags")
-			return
-		}
-
-		if len(tagIDs) > 0 {
-			_, err = tx.Exec(ctx,
-				`INSERT INTO task_tags (workspace_id, task_id, tag_id)
-				 SELECT $1, $2, unnest($3::bigint[])
-				 ON CONFLICT DO NOTHING`,
-				user.WorkspaceID, taskID, tagIDs,
-			)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to update task tags")
-				return
-			}
-		}
-
-		rows, err := tx.Query(ctx,
-			`SELECT tg.id, tg.name, tg.color
-									 FROM task_tags tt
-									 JOIN tags tg ON tg.id = tt.tag_id
-									 WHERE tt.workspace_id = $1 AND tt.task_id = $2
-									 ORDER BY tg.name , tg.id `,
-			user.WorkspaceID, taskID,
-		)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to read task tags")
-			return
-		}
-		defer rows.Close()
-
-		out := make([]TaskTagResponse, 0, 16)
-		for rows.Next() {
-			var t TaskTagResponse
-			if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to read task tags")
-				return
-			}
-			out = append(out, t)
-		}
-		if err := rows.Err(); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to read task tags")
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			l.Error().Err(err).Int64("task_id", taskID).Msg("failed to commit task tags update")
-			writeErr(w, http.StatusInternalServerError, "failed to commit task tags update")
-			return
-		}
-
-		l.Info().Int64("task_id", taskID).Int("count", len(out)).Msg("task tags updated successfully")
-		writeJSON(w, http.StatusOK, out)
+		apiutil.WriteJSON(w, http.StatusOK, out)
 	}
 }

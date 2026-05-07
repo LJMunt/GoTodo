@@ -6,6 +6,7 @@ type Tag struct {
 	ID          int64     `json:"id"`
 	WorkspaceID int64     `json:"workspace_id"`
 	Name        string    `json:"name"`
+	Color       string    `json:"color"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

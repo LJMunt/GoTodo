@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"GoToDo/internal/logging"
+	"GoToDo/internal/repository"
 	"GoToDo/internal/secrets"
 )
 
@@ -144,7 +144,7 @@ func GetConfigValuesHandler(db configQuerier) http.HandlerFunc {
 }
 
 // UpdateTranslationsHandler bulk updates/upserts translations for a language.
-func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateTranslationsHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		lang := r.URL.Query().Get("lang")
 		if lang == "" {
@@ -164,7 +164,7 @@ func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 		l := logging.From(r.Context())
 		l.Info().Str("lang", lang).Int("count", len(translations)).Msg("updating translations")
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
 			return
@@ -201,7 +201,7 @@ func UpdateTranslationsHandler(db *pgxpool.Pool) http.HandlerFunc {
 // - Reject updates for keys with data_type = 'string' (must go through translations)
 // - Validate JSON type matches data_type for 'boolean' and 'number'
 // - (Optional) Reject if is_public = true to avoid public non-string keys
-func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
+func UpdateConfigValuesHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var payload ConfigValues
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -215,7 +215,7 @@ func UpdateConfigValuesHandler(db *pgxpool.Pool) http.HandlerFunc {
 		l := logging.From(r.Context())
 		l.Info().Int("count", len(payload)).Msg("bulk configuration update initiated")
 
-		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to start transaction")
 			return

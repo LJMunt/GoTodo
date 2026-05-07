@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/repository"
+	"github.com/jackc/pgx/v5"
 )
 
 const Version = "v0.7.0"
@@ -37,7 +38,7 @@ func VersionHandler() http.HandlerFunc {
 	}
 }
 
-func ReadyHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ReadyHandler(db repository.DBTX) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
 			writeErr(w, http.StatusServiceUnavailable, "db connection not initialized")
@@ -46,7 +47,12 @@ func ReadyHandler(db *pgxpool.Pool) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 
-		if err := db.Ping(ctx); err != nil {
+		var one int
+		if err := db.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil || one != 1 {
+			if err == pgx.ErrNoRows {
+				writeErr(w, http.StatusServiceUnavailable, "db not ready")
+				return
+			}
 			writeErr(w, http.StatusServiceUnavailable, "db not ready")
 			return
 		}

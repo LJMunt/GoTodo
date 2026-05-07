@@ -1,21 +1,15 @@
 package tags
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	"GoToDo/internal/api/apiutil"
+	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
-	"GoToDo/internal/logging"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"GoToDo/internal/models"
 )
 
 type TagResponse struct {
@@ -50,87 +44,41 @@ func isValidColor(c string) bool {
 	return allowedColors[c]
 }
 
-type apiError struct {
-	Error string `json:"error"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, apiError{Error: msg})
-}
-
-func parseTagID(r *http.Request) (int64, error) {
-	s := chi.URLParam(r, "tagId")
-	return strconv.ParseInt(s, 10, 64)
-}
-
-func normalizeTagName(s string) string {
-	return strings.TrimSpace(s)
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505"
+func mapTagToResponse(t *models.Tag) TagResponse {
+	return TagResponse{
+		ID:        t.ID,
+		Name:      t.Name,
+		Color:     t.Color,
+		CreatedAt: t.CreatedAt,
+		UpdatedAt: t.UpdatedAt,
 	}
-	return false
 }
 
-func ListTagsHandler(db *pgxpool.Pool) http.HandlerFunc {
+func ListTagsHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		query := `SELECT id, name, color, created_at, updated_at FROM tags WHERE workspace_id = $1`
-		args := []any{user.WorkspaceID}
-
-		if q != "" {
-			// citext makes name comparisons case-insensitive
-			query += ` AND name ILIKE '%' || $2 || '%'`
-			args = append(args, q)
-		}
-
-		query += ` ORDER BY name ASC, id ASC`
-
-		rows, err := db.Query(ctx, query, args...)
+		tags, err := deps.TagService.ListTags(r.Context(), user.WorkspaceID, q)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to list tags")
-			return
-		}
-		defer rows.Close()
-
-		out := make([]TagResponse, 0, 64)
-		for rows.Next() {
-			var t TagResponse
-			if err := rows.Scan(&t.ID, &t.Name, &t.Color, &t.CreatedAt, &t.UpdatedAt); err != nil {
-				writeErr(w, http.StatusInternalServerError, "failed to read tags")
-				return
-			}
-			out = append(out, t)
-		}
-		if err := rows.Err(); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to read tags")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusOK, out)
+		resp := make([]TagResponse, 0, len(tags))
+		for _, t := range tags {
+			resp = append(resp, mapTagToResponse(t))
+		}
+
+		apiutil.WriteJSON(w, http.StatusOK, resp)
 	}
 }
 
-func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+func CreateTagHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Name  string `json:"name"`
 		Color string `json:"color"`
@@ -139,23 +87,13 @@ func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		name := normalizeTagName(req.Name)
-		if name == "" {
-			writeErr(w, http.StatusBadRequest, "name is required")
-			return
-		}
-		if len(name) > 64 {
-			writeErr(w, http.StatusBadRequest, "name too long (max 64)")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
@@ -164,41 +102,21 @@ func CreateTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 			color = "slate"
 		}
 		if !isValidColor(color) {
-			writeErr(w, http.StatusBadRequest, "invalid color")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid color")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Str("name", name).Msg("creating tag")
-
-		var out TagResponse
-		err := db.QueryRow(ctx,
-			`INSERT INTO tags (workspace_id, name, color)
-			 VALUES ($1, $2, $3)
-			 RETURNING id, name, color, created_at, updated_at`,
-			user.WorkspaceID, name, color,
-		).Scan(&out.ID, &out.Name, &out.Color, &out.CreatedAt, &out.UpdatedAt)
-
+		t, err := deps.TagService.CreateTag(r.Context(), user.WorkspaceID, req.Name, color)
 		if err != nil {
-			if isUniqueViolation(err) {
-				l.Debug().Str("name", name).Msg("tag creation failed: name exists")
-				writeErr(w, http.StatusConflict, "tag already exists")
-				return
-			}
-			l.Error().Err(err).Msg("failed to create tag")
-			writeErr(w, http.StatusInternalServerError, "failed to create tag")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("tag_id", out.ID).Msg("tag created successfully")
-		writeJSON(w, http.StatusCreated, out)
+		apiutil.WriteJSON(w, http.StatusCreated, mapTagToResponse(t))
 	}
 }
 
-func RenameTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+func RenameTagHandler(deps app.Deps) http.HandlerFunc {
 	type request struct {
 		Name  *string `json:"name"`
 		Color *string `json:"color"`
@@ -207,126 +125,56 @@ func RenameTagHandler(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		tagID, err := parseTagID(r)
+		tagID, err := apiutil.ParseInt64Param(r, "tagId")
 		if err != nil || tagID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid tag id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid tag id")
 			return
 		}
 
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid request body")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		if req.Name == nil && req.Color == nil {
-			writeErr(w, http.StatusBadRequest, "name or color is required")
+		if req.Color != nil && !isValidColor(*req.Color) {
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid color")
 			return
 		}
 
-		var name string
-		if req.Name != nil {
-			name = normalizeTagName(*req.Name)
-			if name == "" {
-				writeErr(w, http.StatusBadRequest, "name is required")
-				return
-			}
-			if len(name) > 64 {
-				writeErr(w, http.StatusBadRequest, "name too long (max 64)")
-				return
-			}
-		}
-
-		if req.Color != nil {
-			if !isValidColor(*req.Color) {
-				writeErr(w, http.StatusBadRequest, "invalid color")
-				return
-			}
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("tag_id", tagID).Msg("updating tag")
-
-		var out TagResponse
-		var query string
-		var args []any
-		if req.Name != nil && req.Color != nil {
-			query = `UPDATE tags SET name = $1, color = $2, updated_at = now() WHERE id = $3 AND workspace_id = $4 RETURNING id, name, color, created_at, updated_at`
-			args = []any{name, *req.Color, tagID, user.WorkspaceID}
-		} else if req.Name != nil {
-			query = `UPDATE tags SET name = $1, updated_at = now() WHERE id = $2 AND workspace_id = $3 RETURNING id, name, color, created_at, updated_at`
-			args = []any{name, tagID, user.WorkspaceID}
-		} else {
-			query = `UPDATE tags SET color = $1, updated_at = now() WHERE id = $2 AND workspace_id = $3 RETURNING id, name, color, created_at, updated_at`
-			args = []any{*req.Color, tagID, user.WorkspaceID}
-		}
-
-		err = db.QueryRow(ctx, query, args...).Scan(&out.ID, &out.Name, &out.Color, &out.CreatedAt, &out.UpdatedAt)
-
-		if errors.Is(err, pgx.ErrNoRows) {
-			l.Debug().Int64("tag_id", tagID).Msg("tag not found for update")
-			writeErr(w, http.StatusNotFound, "tag not found")
-			return
-		}
+		t, err := deps.TagService.UpdateTag(r.Context(), user.WorkspaceID, tagID, req.Name, req.Color)
 		if err != nil {
-			if isUniqueViolation(err) {
-				l.Debug().Int64("tag_id", tagID).Msg("tag update failed: name exists")
-				writeErr(w, http.StatusConflict, "tag already exists")
-				return
-			}
-			l.Error().Err(err).Int64("tag_id", tagID).Msg("failed to update tag")
-			writeErr(w, http.StatusInternalServerError, "failed to update tag")
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("tag_id", tagID).Msg("tag updated successfully")
-		writeJSON(w, http.StatusOK, out)
+		apiutil.WriteJSON(w, http.StatusOK, mapTagToResponse(t))
 	}
 }
 
-func DeleteTagHandler(db *pgxpool.Pool) http.HandlerFunc {
+func DeleteTagHandler(deps app.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, ok := authmw.FromContext(r.Context())
 		if !ok {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			apiutil.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		tagID, err := parseTagID(r)
+		tagID, err := apiutil.ParseInt64Param(r, "tagId")
 		if err != nil || tagID <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid tag id")
+			apiutil.WriteErr(w, http.StatusBadRequest, "invalid tag id")
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		l := logging.From(r.Context())
-		l.Info().Int64("user_id", user.ID).Int64("workspace_id", user.WorkspaceID).Int64("tag_id", tagID).Msg("deleting tag")
-
-		tag, err := db.Exec(ctx,
-			`DELETE FROM tags WHERE id = $1 AND workspace_id = $2`,
-			tagID, user.WorkspaceID,
-		)
-		if err != nil {
-			l.Error().Err(err).Int64("tag_id", tagID).Msg("failed to delete tag")
-			writeErr(w, http.StatusInternalServerError, "failed to delete tag")
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			l.Debug().Int64("tag_id", tagID).Msg("tag not found for deletion")
-			writeErr(w, http.StatusNotFound, "tag not found")
+		if err := deps.TagService.DeleteTag(r.Context(), user.WorkspaceID, tagID); err != nil {
+			apiutil.HandleServiceErr(w, err)
 			return
 		}
 
-		l.Info().Int64("tag_id", tagID).Msg("tag deleted successfully")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

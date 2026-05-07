@@ -9,53 +9,53 @@ import (
 	"testing"
 	"time"
 
+	"GoToDo/internal/api/apiutil"
+	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
+	"GoToDo/internal/models"
+	"GoToDo/internal/service"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 )
 
-type fakeRow struct {
-	scanFn func(dest ...any) error
+type mockProjectService struct {
+	service.ProjectService
+	CreateProjectFunc func(ctx context.Context, workspaceID int64, name string, description *string) (*models.Project, error)
+	GetProjectFunc    func(ctx context.Context, workspaceID, projectID int64) (*models.Project, error)
 }
 
-func (r fakeRow) Scan(dest ...any) error {
-	return r.scanFn(dest...)
+func (m *mockProjectService) CreateProject(ctx context.Context, workspaceID int64, name string, description *string) (*models.Project, error) {
+	return m.CreateProjectFunc(ctx, workspaceID, name, description)
 }
 
-type fakeProjectDB struct {
-	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
-func (db fakeProjectDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	return db.queryRowFn(ctx, sql, args...)
+func (m *mockProjectService) GetProject(ctx context.Context, workspaceID, projectID int64) (*models.Project, error) {
+	return m.GetProjectFunc(ctx, workspaceID, projectID)
 }
 
 func TestCreateProjectHandler_Success(t *testing.T) {
 	now := time.Now().UTC()
 	desc := "Sample project"
 
-	db := fakeProjectDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
-			return fakeRow{
-				scanFn: func(dest ...any) error {
-					*dest[0].(*int64) = 10
-					*dest[1].(*string) = "My Project"
-					*dest[2].(**string) = &desc
-					*dest[3].(*time.Time) = now
-					*dest[4].(*time.Time) = now
-					return nil
-				},
-			}
+	ps := &mockProjectService{
+		CreateProjectFunc: func(ctx context.Context, workspaceID int64, name string, description *string) (*models.Project, error) {
+			return &models.Project{
+				ID:          10,
+				Name:        name,
+				Description: description,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}, nil
 		},
 	}
+
+	deps := app.Deps{ProjectService: ps}
 
 	body := `{"name":"My Project","description":"Sample project"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewBufferString(body))
 	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 1}))
 	rec := httptest.NewRecorder()
 
-	CreateProjectHandler(db).ServeHTTP(rec, req)
+	CreateProjectHandler(deps).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
@@ -74,15 +74,13 @@ func TestCreateProjectHandler_Success(t *testing.T) {
 }
 
 func TestGetProjectHandler_NotFound(t *testing.T) {
-	db := fakeProjectDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
-			return fakeRow{
-				scanFn: func(_ ...any) error {
-					return pgx.ErrNoRows
-				},
-			}
+	ps := &mockProjectService{
+		GetProjectFunc: func(ctx context.Context, workspaceID, projectID int64) (*models.Project, error) {
+			return nil, service.ErrNotFound
 		},
 	}
+
+	deps := app.Deps{ProjectService: ps}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1", nil)
 	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 1}))
@@ -92,17 +90,17 @@ func TestGetProjectHandler_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
-	GetProjectHandler(db).ServeHTTP(rec, req)
+	GetProjectHandler(deps).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
 
-	var resp apiError
+	var resp apiutil.APIError
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Error != "project not found" {
+	if resp.Error != service.ErrNotFound.Error() {
 		t.Fatalf("unexpected error %q", resp.Error)
 	}
 }

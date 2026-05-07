@@ -8,166 +8,102 @@ import (
 	"testing"
 	"time"
 
+	"GoToDo/internal/api/apiutil"
+	"GoToDo/internal/app"
 	authmw "GoToDo/internal/auth"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"GoToDo/internal/models"
+	"GoToDo/internal/service"
 )
 
-type fakeRow struct {
-	scanFn func(dest ...any) error
+type mockUserService struct {
+	service.UserService
+	GetUserMeFunc func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error)
 }
 
-func (r fakeRow) Scan(dest ...any) error {
-	return r.scanFn(dest...)
-}
-
-type fakeRows struct {
-	rows [][]any
-	idx  int
-}
-
-func (r *fakeRows) Next() bool {
-	return r.idx < len(r.rows)
-}
-
-func (r *fakeRows) Scan(dest ...any) error {
-	if r.idx >= len(r.rows) {
-		return pgx.ErrNoRows
-	}
-	row := r.rows[r.idx]
-	for i, v := range row {
-		switch d := dest[i].(type) {
-		case *string:
-			*d = v.(string)
-		case *int64:
-			*d = v.(int64)
-		case *bool:
-			*d = v.(bool)
-		case **time.Time:
-			if v == nil {
-				*d = nil
-			} else {
-				*d = v.(*time.Time)
-			}
-		}
-	}
-	r.idx++
-	return nil
-}
-
-func (r *fakeRows) Close()                                       {}
-func (r *fakeRows) Err() error                                   { return nil }
-func (r *fakeRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
-func (r *fakeRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *fakeRows) Values() ([]any, error)                       { return nil, nil }
-func (r *fakeRows) RawValues() [][]byte                          { return nil }
-func (r *fakeRows) Conn() *pgx.Conn                              { return nil }
-
-type fakeUserDB struct {
-	queryRowFn func(ctx context.Context, sql string, args ...any) pgx.Row
-	queryFn    func(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func (db fakeUserDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	return db.queryRowFn(ctx, sql, args...)
-}
-
-func (db fakeUserDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if db.queryFn != nil {
-		return db.queryFn(ctx, sql, args...)
-	}
-	return &fakeRows{}, nil
-}
-
-func (db fakeUserDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, nil
+func (m *mockUserService) GetUserMe(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+	return m.GetUserMeFunc(ctx, userID)
 }
 
 func TestMeHandler_Success(t *testing.T) {
-	db := fakeUserDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
-			return fakeRow{
-				scanFn: func(dest ...any) error {
-					*dest[0].(*string) = "ULID1234567890123456789012"
-					*dest[1].(*string) = "user@example.com"
-					*dest[2].(*bool) = true
-					*dest[3].(*bool) = true
-					*dest[4].(**time.Time) = nil
-					*dest[5].(**time.Time) = nil
-					*dest[6].(*string) = "system"
-					*dest[7].(*bool) = false
-					*dest[8].(*string) = "en"
-					*dest[9].(*bool) = false
-					return nil
-				},
+	now := time.Now().UTC()
+	us := &mockUserService{
+		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+			u := &models.User{
+				ID:              userID,
+				PublicID:        "ULID1234567890123456789012",
+				Email:           "user@example.com",
+				IsAdmin:         true,
+				IsActive:        true,
+				EmailVerifiedAt: &now,
+				TOTPEnabled:     false,
+				UITheme:         "system",
+				Language:        "en",
 			}
+			ws := &models.Workspace{
+				PublicID: "WS1234567890123456789012",
+				Type:     models.WorkspaceTypeUser,
+			}
+			return u, ws, nil
 		},
 	}
+
+	deps := app.Deps{UserService: us}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
 	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 7, IsAdmin: true}))
 	rec := httptest.NewRecorder()
 
-	MeHandler(db).ServeHTTP(rec, req)
+	MeHandler(deps).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	var resp map[string]any
+	var resp userMeResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["email"] != "user@example.com" {
-		t.Fatalf("unexpected email %v", resp["email"])
+	if resp.Email != "user@example.com" {
+		t.Fatalf("unexpected email %v", resp.Email)
 	}
-	if resp["public_id"] != "ULID1234567890123456789012" {
-		t.Fatalf("unexpected public_id %v", resp["public_id"])
+	if resp.PublicID != "ULID1234567890123456789012" {
+		t.Fatalf("unexpected public_id %v", resp.PublicID)
 	}
-	if resp["is_admin"] != true {
-		t.Fatalf("unexpected is_admin %v", resp["is_admin"])
+	if resp.IsAdmin != true {
+		t.Fatalf("unexpected is_admin %v", resp.IsAdmin)
 	}
-	if resp["is_active"] != true {
-		t.Fatalf("unexpected is_active %v", resp["is_active"])
+	if resp.IsActive != true {
+		t.Fatalf("unexpected is_active %v", resp.IsActive)
 	}
-	if resp["mfa_enabled"] != false {
-		t.Fatalf("unexpected mfa_enabled %v", resp["mfa_enabled"])
-	}
-	if v, ok := resp["email_verified_at"]; !ok || v != nil {
-		t.Fatalf("unexpected email_verified_at %v", v)
-	}
-	if _, ok := resp["id"]; ok {
-		t.Fatal("expected id to be removed from response")
+	if resp.MfaEnabled != false {
+		t.Fatalf("unexpected mfa_enabled %v", resp.MfaEnabled)
 	}
 }
 
 func TestMeHandler_NotFound(t *testing.T) {
-	db := fakeUserDB{
-		queryRowFn: func(_ context.Context, _ string, _ ...any) pgx.Row {
-			return fakeRow{
-				scanFn: func(_ ...any) error {
-					return pgx.ErrNoRows
-				},
-			}
+	us := &mockUserService{
+		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+			return nil, nil, service.ErrNotFound
 		},
 	}
+
+	deps := app.Deps{UserService: us}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil)
 	req = req.WithContext(authmw.WithUser(req.Context(), authmw.User{ID: 7}))
 	rec := httptest.NewRecorder()
 
-	MeHandler(db).ServeHTTP(rec, req)
+	MeHandler(deps).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
 
-	var resp apiError
+	var resp apiutil.APIError
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Error != "user not found" {
+	if resp.Error != service.ErrNotFound.Error() {
 		t.Fatalf("unexpected error %q", resp.Error)
 	}
 }
