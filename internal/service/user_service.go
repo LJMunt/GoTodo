@@ -16,7 +16,7 @@ type UpdateUserParams struct {
 }
 
 type UserService interface {
-	GetUserMe(ctx context.Context, userID int64) (*models.User, *models.Workspace, error)
+	GetUserMe(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error)
 	SearchUsers(ctx context.Context, query string) ([]*models.User, error)
 	UpdateUser(ctx context.Context, userID int64, params UpdateUserParams) (*models.User, error)
 	DeleteUser(ctx context.Context, userID int64) error
@@ -36,7 +36,7 @@ func NewUserService(pool *pgxpool.Pool, userRepo repository.UserRepository, work
 	}
 }
 
-func (s *userService) GetUserMe(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+func (s *userService) GetUserMe(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error) {
 	user, err := s.userRepo.GetByID(ctx, s.pool, userID)
 	if err != nil {
 		return nil, nil, err
@@ -45,12 +45,12 @@ func (s *userService) GetUserMe(ctx context.Context, userID int64) (*models.User
 		return nil, nil, ErrNotFound
 	}
 
-	ws, err := s.workspaceRepo.GetPersonalByUserID(ctx, s.pool, userID)
+	workspaces, err := s.workspaceRepo.ListForUser(ctx, s.pool, userID)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return user, ws, nil
+	return user, workspaces, nil
 }
 
 func (s *userService) SearchUsers(ctx context.Context, query string) ([]*models.User, error) {

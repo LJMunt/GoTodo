@@ -86,6 +86,7 @@ components:
           type: string
         workspace_id:
           type: string
+          description: 26-character ULID identifying the organization's workspace.
         deleted_at:
           oneOf: [{type: string, format: date-time}, {type: "null"}]
         created_at:
@@ -139,6 +140,7 @@ components:
           format: int64
         workspace_id:
           type: string
+          description: 26-character ULID of the workspace this task belongs to.
         project_id:
           type: integer
           format: int64
@@ -265,10 +267,13 @@ components:
       properties:
         public_id:
           type: string
+          description: 26-character ULID identifying the workspace.
         type:
           type: string
           enum: [user, org]
-      required: [public_id, type]
+        name:
+          type: string
+      required: [public_id, type, name]
 
     Occurrence:
       type: object

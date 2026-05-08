@@ -20,6 +20,7 @@ type userSettings struct {
 type WorkspaceResponse struct {
 	PublicID string `json:"public_id"`
 	Type     string `json:"type"`
+	Name     string `json:"name"`
 }
 
 type userMeResponse struct {
@@ -61,12 +62,15 @@ func MeHandler(deps app.Deps) http.HandlerFunc {
 				Language:             u.Language,
 			},
 			MfaEnabled: u.TOTPEnabled,
-			Workspaces: []WorkspaceResponse{
-				{
-					PublicID: ws.PublicID,
-					Type:     string(ws.Type),
-				},
-			},
+			Workspaces: make([]WorkspaceResponse, 0, len(ws)),
+		}
+
+		for _, w := range ws {
+			resp.Workspaces = append(resp.Workspaces, WorkspaceResponse{
+				PublicID: w.PublicID,
+				Type:     string(w.Type),
+				Name:     w.Name,
+			})
 		}
 
 		apiutil.WriteJSON(w, http.StatusOK, resp)
@@ -112,7 +116,7 @@ func UpdateMeHandler(deps app.Deps) http.HandlerFunc {
 			return
 		}
 
-		_, personalWs, err := deps.UserService.GetUserMe(r.Context(), user.ID)
+		_, workspaces, err := deps.UserService.GetUserMe(r.Context(), user.ID)
 		if err != nil {
 			apiutil.HandleServiceErr(w, err)
 			return
@@ -131,12 +135,15 @@ func UpdateMeHandler(deps app.Deps) http.HandlerFunc {
 				Language:             u.Language,
 			},
 			MfaEnabled: u.TOTPEnabled,
-			Workspaces: []WorkspaceResponse{
-				{
-					PublicID: personalWs.PublicID,
-					Type:     string(personalWs.Type),
-				},
-			},
+			Workspaces: make([]WorkspaceResponse, 0, len(workspaces)),
+		}
+
+		for _, w := range workspaces {
+			resp.Workspaces = append(resp.Workspaces, WorkspaceResponse{
+				PublicID: w.PublicID,
+				Type:     string(w.Type),
+				Name:     w.Name,
+			})
 		}
 
 		apiutil.WriteJSON(w, http.StatusOK, resp)

@@ -12,10 +12,12 @@ import (
 )
 
 type OrganizationResponse struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                int64      `json:"id"`
+	Name              string     `json:"name"`
+	WorkspacePublicID string     `json:"workspace_id"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	DeletedAt         *time.Time `json:"deleted_at,omitempty"`
 }
 
 type MemberResponse struct {
@@ -27,10 +29,12 @@ type MemberResponse struct {
 
 func mapOrgToResponse(o *models.Organization) OrganizationResponse {
 	return OrganizationResponse{
-		ID:        o.ID,
-		Name:      o.Name,
-		CreatedAt: o.CreatedAt,
-		UpdatedAt: o.UpdatedAt,
+		ID:                o.ID,
+		Name:              o.Name,
+		WorkspacePublicID: o.WorkspacePublicID,
+		CreatedAt:         o.CreatedAt,
+		UpdatedAt:         o.UpdatedAt,
+		DeletedAt:         o.DeletedAt,
 	}
 }
 

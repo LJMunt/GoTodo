@@ -13,6 +13,7 @@ type Workspace struct {
 	ID        int64         `json:"id"`
 	PublicID  string        `json:"public_id"`
 	Type      WorkspaceType `json:"type"`
+	Name      string        `json:"name"` // Populated during query, not in table
 	UserID    *int64        `json:"user_id,omitempty"`
 	OrgID     *int64        `json:"org_id,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`

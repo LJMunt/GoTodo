@@ -17,17 +17,17 @@ import (
 
 type mockUserService struct {
 	service.UserService
-	GetUserMeFunc func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error)
+	GetUserMeFunc func(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error)
 }
 
-func (m *mockUserService) GetUserMe(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+func (m *mockUserService) GetUserMe(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error) {
 	return m.GetUserMeFunc(ctx, userID)
 }
 
 func TestMeHandler_Success(t *testing.T) {
 	now := time.Now().UTC()
 	us := &mockUserService{
-		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error) {
 			u := &models.User{
 				ID:              userID,
 				PublicID:        "ULID1234567890123456789012",
@@ -39,9 +39,12 @@ func TestMeHandler_Success(t *testing.T) {
 				UITheme:         "system",
 				Language:        "en",
 			}
-			ws := &models.Workspace{
-				PublicID: "WS1234567890123456789012",
-				Type:     models.WorkspaceTypeUser,
+			ws := []*models.Workspace{
+				{
+					PublicID: "WS1234567890123456789012",
+					Type:     models.WorkspaceTypeUser,
+					Name:     "Personal",
+				},
 			}
 			return u, ws, nil
 		},
@@ -82,7 +85,7 @@ func TestMeHandler_Success(t *testing.T) {
 
 func TestMeHandler_NotFound(t *testing.T) {
 	us := &mockUserService{
-		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, *models.Workspace, error) {
+		GetUserMeFunc: func(ctx context.Context, userID int64) (*models.User, []*models.Workspace, error) {
 			return nil, nil, service.ErrNotFound
 		},
 	}

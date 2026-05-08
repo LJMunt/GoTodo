@@ -2,6 +2,7 @@ package service
 
 import (
 	"GoToDo/internal/models"
+	"GoToDo/internal/pkg/idgen"
 	"GoToDo/internal/repository"
 	"context"
 	"fmt"
@@ -59,17 +60,22 @@ func (s *orgService) CreateOrganization(ctx context.Context, userID int64, name 
 	}
 
 	// Create workspace for org
+	workspacePublicID := idgen.NewULID()
 	_, err = tx.Exec(ctx,
 		`INSERT INTO workspaces (public_id, type, org_id) VALUES ($1, 'org', $2)`,
-		"org_"+org.Name, // This is just a placeholder, should use proper ID generation
+		workspacePublicID,
 		org.ID,
 	)
-	// TODO: use proper public_id generation (26 chars)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
+	org.WorkspacePublicID = workspacePublicID
 	return org, nil
 }
 

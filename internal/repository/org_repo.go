@@ -41,9 +41,12 @@ func (r *organizationRepository) Create(ctx context.Context, db DBTX, name strin
 func (r *organizationRepository) GetByID(ctx context.Context, db DBTX, id int64) (*models.Organization, error) {
 	var o models.Organization
 	err := db.QueryRow(ctx,
-		`SELECT id, name, created_at, updated_at, deleted_at FROM orgs WHERE id=$1 AND deleted_at IS NULL`,
+		`SELECT o.id, o.name, w.public_id, o.created_at, o.updated_at, o.deleted_at 
+		 FROM orgs o
+		 JOIN workspaces w ON w.org_id = o.id AND w.type = 'org'
+		 WHERE o.id=$1 AND o.deleted_at IS NULL`,
 		id,
-	).Scan(&o.ID, &o.Name, &o.CreatedAt, &o.UpdatedAt, &o.DeletedAt)
+	).Scan(&o.ID, &o.Name, &o.WorkspacePublicID, &o.CreatedAt, &o.UpdatedAt, &o.DeletedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -68,9 +71,10 @@ func (r *organizationRepository) Delete(ctx context.Context, db DBTX, id int64) 
 
 func (r *organizationRepository) ListByUserID(ctx context.Context, db DBTX, userID int64) ([]*models.Organization, error) {
 	rows, err := db.Query(ctx,
-		`SELECT o.id, o.name, o.created_at, o.updated_at
+		`SELECT o.id, o.name, w.public_id, o.created_at, o.updated_at
 		 FROM orgs o
 		 JOIN org_members om ON o.id = om.org_id
+		 JOIN workspaces w ON w.org_id = o.id AND w.type = 'org'
 		 WHERE om.user_id = $1 AND o.deleted_at IS NULL
 		 ORDER BY o.name ASC`,
 		userID,
@@ -83,7 +87,7 @@ func (r *organizationRepository) ListByUserID(ctx context.Context, db DBTX, user
 	var orgs []*models.Organization
 	for rows.Next() {
 		var o models.Organization
-		if err := rows.Scan(&o.ID, &o.Name, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Name, &o.WorkspacePublicID, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		orgs = append(orgs, &o)
